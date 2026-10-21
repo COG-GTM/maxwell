@@ -1,18 +1,29 @@
 package com.zendesk.maxwell;
 
 import java.net.URISyntaxException;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
 import com.github.shyiko.mysql.binlog.network.SSLMode;
 
 import org.apache.http.client.utils.URIBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Configuration object describing a mysql connection
  */
 public class MaxwellMysqlConfig {
+	private static final Logger LOGGER = LoggerFactory.getLogger(MaxwellMysqlConfig.class);
+
+	/**
+	 * Connector/J connection property controlling TLS and server certificate / hostname verification
+	 */
+	public static final String JDBC_SSL_MODE = "sslMode";
 
 	public String host;
 	public Integer port;
@@ -87,18 +98,6 @@ public class MaxwellMysqlConfig {
 		this.sslMode = c.sslMode;
 	}
 
-	private void useSSL(boolean should) {
-		this.jdbcOptions.put("useSSL", String.valueOf(should));
-	}
-
-	private void requireSSL(boolean should) {
-		this.jdbcOptions.put("requireSSL", String.valueOf(should));
-	}
-
-	private void verifyServerCertificate(boolean should) {
-		this.jdbcOptions.put("verifyServerCertificate", String.valueOf(should));
-	}
-
 	/**
 	 * Parse JDBC options from a key=val&amp;key2=val2 string
 	 * @param opts string to parse
@@ -115,21 +114,51 @@ public class MaxwellMysqlConfig {
 		}
 	}
 
-	private void setSSLOptions() {
-		if (sslMode != null && sslMode != SSLMode.DISABLED) {
-			this.useSSL(true); // for all SSL modes other than DISABLED, use SSL
+	/**
+	 * JDBC driver options for this connection: the configured jdbcOptions plus
+	 * Connector/J's {@code sslMode} property, mapped one-to-one from {@link #sslMode}.
+	 *
+	 * If jdbcOptions also sets {@code sslMode}, the stricter of the two modes is used.
+	 * When {@link #sslMode} is null the driver's own default (or jdbcOptions) applies.
+	 *
+	 * @return a new map of JDBC options; jdbcOptions is not modified
+	 */
+	public Map<String, String> getJDBCConnectionOptions() {
+		Map<String, String> options = new LinkedHashMap<>(jdbcOptions);
+		if (sslMode == null)
+			return options;
 
-			this.verifyServerCertificate(false); // default to not verify server cert
-			this.requireSSL(false); // default to not require SSL
-
-			this.requireSSL(sslMode == SSLMode.REQUIRED || sslMode == SSLMode.VERIFY_CA
-					|| sslMode == SSLMode.VERIFY_IDENTITY);
-
-			this.verifyServerCertificate(sslMode == SSLMode.VERIFY_IDENTITY);
+		SSLMode effective = sslMode;
+		String jdbcSslMode = options.get(JDBC_SSL_MODE);
+		if (jdbcSslMode != null) {
+			SSLMode jdbcMode = parseSSLMode(jdbcSslMode);
+			if (jdbcMode != null && sslStrength(jdbcMode) > sslStrength(effective)) {
+				effective = jdbcMode;
+			}
+			if (jdbcMode != sslMode) {
+				LOGGER.warn("ssl={} conflicts with jdbc_options sslMode={}; using sslMode={}", sslMode, jdbcSslMode, effective);
+			}
 		}
-		else {
-			this.useSSL(false);
+
+		options.put(JDBC_SSL_MODE, effective.name());
+		return options;
+	}
+
+	private static final List<SSLMode> SSL_MODES_BY_STRENGTH = Arrays.asList(
+		SSLMode.DISABLED, SSLMode.PREFERRED, SSLMode.REQUIRED, SSLMode.VERIFY_CA, SSLMode.VERIFY_IDENTITY
+	);
+
+	private static int sslStrength(SSLMode mode) {
+		return SSL_MODES_BY_STRENGTH.indexOf(mode);
+	}
+
+	private static SSLMode parseSSLMode(String mode) {
+		for (SSLMode m : SSLMode.values()) {
+			if (m.name().equalsIgnoreCase(mode.trim())) {
+				return m;
+			}
 		}
+		return null;
 	}
 
 	/**
@@ -139,8 +168,6 @@ public class MaxwellMysqlConfig {
 	 * @throws URISyntaxException if we have problems building the URI
 	 */
 	public String getConnectionURI(boolean includeDatabase) throws URISyntaxException {
-		this.setSSLOptions();
-
 		URIBuilder uriBuilder = new URIBuilder();
 
 		uriBuilder.setScheme("jdbc:mysql");
@@ -151,7 +178,7 @@ public class MaxwellMysqlConfig {
 			uriBuilder.setPath("/" + database);
 		}
 
-		for (Map.Entry<String, String> jdbcOption : jdbcOptions.entrySet()) {
+		for (Map.Entry<String, String> jdbcOption : getJDBCConnectionOptions().entrySet()) {
 			uriBuilder.addParameter(jdbcOption.getKey(), jdbcOption.getValue());
 		}
 

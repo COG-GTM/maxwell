@@ -26,7 +26,7 @@ public class MaxwellMysqlConfigTest {
 
 		try {
 			final String uri = config.getConnectionURI();
-			assertThat(uri, is(equalTo("jdbc:mysql://localhost:3306/maxwell?allowPublicKeyRetrieval=true&connectTimeout=5000&zeroDateTimeBehavior=convertToNull&initialTimeout=2&autoReconnect=true&maxReconnects=10&useSSL=false&characterEncoding=UTF-8&tinyInt1isBit=false")));
+			assertThat(uri, is(equalTo("jdbc:mysql://localhost:3306/maxwell?allowPublicKeyRetrieval=true&connectTimeout=5000&zeroDateTimeBehavior=convertToNull&initialTimeout=2&autoReconnect=true&maxReconnects=10&sslMode=DISABLED&characterEncoding=UTF-8&tinyInt1isBit=false")));
 		}
 		catch (URISyntaxException e) {
 			fail();
@@ -34,100 +34,79 @@ public class MaxwellMysqlConfigTest {
 
 	}
 
-	@Test
-	public void testSSLPreferred() {
-
+	private static MaxwellMysqlConfig configWithSSL(SSLMode mode) {
 		MaxwellMysqlConfig config = new MaxwellMysqlConfig();
-
 		config.host = "localhost";
 		config.port = 3306;
 		config.user = "maxwell";
 		config.password = "maxwell";
 		config.database = "maxwell";
-		config.sslMode = SSLMode.PREFERRED;
+		config.sslMode = mode;
+		return config;
+	}
 
-		try {
-			final String uri = config.getConnectionURI();
-			assertThat(uri, is(containsString("useSSL=true")));
-			assertThat(uri, is(containsString("requireSSL=false")));
-			assertThat(uri, is(containsString("verifyServerCertificate=false")));
-		}
-		catch (URISyntaxException e) {
-			fail();
-		}
-
+	private static void assertSSLMode(SSLMode mode, String expectedSslMode) throws URISyntaxException {
+		String uri = configWithSSL(mode).getConnectionURI();
+		assertThat(uri, containsString("sslMode=" + expectedSslMode));
+		assertThat(uri, not(containsString("useSSL=")));
+		assertThat(uri, not(containsString("requireSSL=")));
+		assertThat(uri, not(containsString("verifyServerCertificate=")));
 	}
 
 	@Test
-	public void testSSLRequired() {
-
-		MaxwellMysqlConfig config = new MaxwellMysqlConfig();
-
-		config.host = "localhost";
-		config.port = 3306;
-		config.user = "maxwell";
-		config.password = "maxwell";
-		config.database = "maxwell";
-		config.sslMode = SSLMode.REQUIRED;
-
-		try {
-			String uri = config.getConnectionURI();
-			assertThat(uri, is(containsString("requireSSL=true")));
-			assertThat(uri, is(containsString("useSSL=true")));
-			assertThat(uri, is(containsString("verifyServerCertificate=false")));
-		}
-		catch (URISyntaxException e) {
-			fail();
-		}
-
+	public void testSSLDisabled() throws URISyntaxException {
+		assertSSLMode(SSLMode.DISABLED, "DISABLED");
 	}
 
 	@Test
-	public void testSSLVerifyCA() {
-
-		MaxwellMysqlConfig config = new MaxwellMysqlConfig();
-
-		config.host = "localhost";
-		config.port = 3306;
-		config.user = "maxwell";
-		config.password = "maxwell";
-		config.database = "maxwell";
-		config.sslMode = SSLMode.VERIFY_CA;
-
-		try {
-			final String uri = config.getConnectionURI();
-			assertThat(uri, is(containsString("requireSSL=true")));
-			assertThat(uri, is(containsString("useSSL=true")));
-			assertThat(uri, is(containsString("verifyServerCertificate=false")));
-		}
-		catch (URISyntaxException e) {
-			fail();
-		}
-
+	public void testSSLPreferred() throws URISyntaxException {
+		assertSSLMode(SSLMode.PREFERRED, "PREFERRED");
 	}
 
 	@Test
-	public void testSSLVerifyId() {
+	public void testSSLRequired() throws URISyntaxException {
+		assertSSLMode(SSLMode.REQUIRED, "REQUIRED");
+	}
 
-		MaxwellMysqlConfig config = new MaxwellMysqlConfig();
+	@Test
+	public void testSSLVerifyCA() throws URISyntaxException {
+		assertSSLMode(SSLMode.VERIFY_CA, "VERIFY_CA");
+	}
 
-		config.host = "localhost";
-		config.port = 3306;
-		config.user = "maxwell";
-		config.password = "maxwell";
-		config.database = "maxwell";
-		config.sslMode = SSLMode.VERIFY_IDENTITY;
+	@Test
+	public void testSSLVerifyId() throws URISyntaxException {
+		assertSSLMode(SSLMode.VERIFY_IDENTITY, "VERIFY_IDENTITY");
+	}
 
-		try {
-			final String uri = config.getConnectionURI();
-			assertThat(uri, is(containsString("requireSSL=true")));
-			assertThat(uri, is(containsString("useSSL=true")));
-			assertThat(uri, is(containsString("verifyServerCertificate=true")));
-		}
-		catch (URISyntaxException e) {
-			fail();
-		}
+	@Test
+	public void testNullSSLModeLeavesDriverDefault() throws URISyntaxException {
+		String uri = configWithSSL(null).getConnectionURI();
+		assertThat(uri, not(containsString("sslMode=")));
+		assertThat(uri, not(containsString("useSSL=")));
+	}
 
+	@Test
+	public void testJdbcSslModeCannotWeakenSSLOption() throws URISyntaxException {
+		MaxwellMysqlConfig config = configWithSSL(SSLMode.VERIFY_IDENTITY);
+		config.setJDBCOptions("sslMode=REQUIRED");
+		String uri = config.getConnectionURI();
+		assertThat(uri, containsString("sslMode=VERIFY_IDENTITY"));
+		assertThat(uri, not(containsString("sslMode=REQUIRED")));
+	}
+
+	@Test
+	public void testStricterJdbcSslModeIsKept() throws URISyntaxException {
+		MaxwellMysqlConfig config = configWithSSL(SSLMode.DISABLED);
+		config.setJDBCOptions("sslMode=verify_ca");
+		assertThat(config.getConnectionURI(), containsString("sslMode=VERIFY_CA"));
+	}
+
+	@Test
+	public void testConnectionURIDoesNotMutateJdbcOptions() throws URISyntaxException {
+		MaxwellMysqlConfig config = configWithSSL(SSLMode.VERIFY_CA);
+		config.getConnectionURI();
+		assertThat(config.jdbcOptions.containsKey("sslMode"), is(false));
+		assertThat(config.jdbcOptions.containsKey("useSSL"), is(false));
 	}
 
 }
