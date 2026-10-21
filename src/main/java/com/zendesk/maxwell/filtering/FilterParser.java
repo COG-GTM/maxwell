@@ -1,20 +1,21 @@
 package com.zendesk.maxwell.filtering;
 
-import com.amazonaws.util.StringInputStream;
-
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.Reader;
 import java.io.StreamTokenizer;
-import java.io.UnsupportedEncodingException;
+import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 import static java.io.StreamTokenizer.*;
 
 public class FilterParser {
+	public static final int MAX_FILTER_LENGTH = 64 * 1024;
+
 	private StreamTokenizer tokenizer;
-	private InputStreamReader inputStream;
+	private Reader inputStream;
 	private final String input;
 
 	public FilterParser(String input) {
@@ -22,11 +23,10 @@ public class FilterParser {
 	}
 
 	public List<FilterPattern> parse() throws InvalidFilterException {
-		try {
-			this.inputStream = new InputStreamReader(new StringInputStream(input));
-		} catch ( UnsupportedEncodingException e ) {
-			throw new InvalidFilterException(e.getMessage());
-		}
+		if ( input != null && input.length() > MAX_FILTER_LENGTH )
+			throw new InvalidFilterException("filter exceeds maximum length of " + MAX_FILTER_LENGTH + " characters");
+
+		this.inputStream = new StringReader(input);
 
 		this.tokenizer = new StreamTokenizer(inputStream);
 		try {
@@ -125,7 +125,11 @@ public class FilterParser {
 		Pattern pattern;
 		switch ( tokenizer.ttype ) {
 			case '/':
-				pattern = Pattern.compile(parseRegexp());
+				try {
+					pattern = Pattern.compile(parseRegexp());
+				} catch ( PatternSyntaxException e ) {
+					throw new IOException("invalid regexp: " + e.getDescription());
+				}
 				break;
 			case '*':
 				pattern = Pattern.compile("");
@@ -144,16 +148,19 @@ public class FilterParser {
 	}
 
 	private String parseRegexp() throws IOException {
-		char ch, lastChar = 0;
-		String s = "";
+		int ch, lastChar = 0;
+		StringBuilder s = new StringBuilder();
 		while ( true ) {
-			ch = (char) inputStream.read();
+			ch = inputStream.read();
+			if ( ch == -1 )
+				throw new IOException("unterminated regexp");
+
 			if ( ch == '/' && lastChar != '\\' )
 				break;
 
-			s += ch;
+			s.append((char) ch);
 			lastChar = ch;
 		}
-		return s;
+		return s.toString();
 	}
 }
