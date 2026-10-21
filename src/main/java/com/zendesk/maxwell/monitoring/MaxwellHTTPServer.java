@@ -65,6 +65,10 @@ public class MaxwellHTTPServer {
 	private static MaxwellDiagnosticContext getDiagnosticContext(MaxwellContext context) {
 		MaxwellDiagnosticContext.Config diagnosticConfig = context.getConfig().diagnosticConfig;
 		if (diagnosticConfig.enable) {
+			if (!diagnosticConfig.isTokenRequired()) {
+				LOGGER.warn("http_diagnostic is enabled without http_diagnostic_token: /diagnostic only answers loopback callers, "
+						+ "with redacted results. Set http_diagnostic_token to allow remote callers.");
+			}
 			return context.getDiagnosticContext();
 		} else {
 			return null;

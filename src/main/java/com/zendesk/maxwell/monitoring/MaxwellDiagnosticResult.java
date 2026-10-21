@@ -1,7 +1,9 @@
 package com.zendesk.maxwell.monitoring;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 public class MaxwellDiagnosticResult {
 
@@ -27,7 +29,16 @@ public class MaxwellDiagnosticResult {
 		return checks;
 	}
 
+	/**
+	 * @return a copy safe to return to unauthenticated callers: only name, status and a fixed message
+	 */
+	public MaxwellDiagnosticResult redacted() {
+		return new MaxwellDiagnosticResult(checks.stream().map(Check::redacted).collect(Collectors.toList()));
+	}
+
 	public static class Check {
+		static final String REDACTED_FAILURE = "check failed, see maxwell logs for details";
+
 		private final String name;
 		private final boolean success;
 		private final boolean mandatory;
@@ -35,11 +46,21 @@ public class MaxwellDiagnosticResult {
 		private final Map<String, String> info;
 
 		public Check(MaxwellDiagnostic diagnostic, boolean success, Map<String, String> info) {
-			this.name = diagnostic.getName();
+			this(diagnostic.getName(), success, diagnostic.isMandatory(), diagnostic.getResource(), info);
+		}
+
+		public Check(String name, boolean success, boolean mandatory, String resource, Map<String, String> info) {
+			this.name = name;
 			this.success = success;
-			this.mandatory = diagnostic.isMandatory();
-			this.resource = diagnostic.getResource();
+			this.mandatory = mandatory;
+			this.resource = resource;
 			this.info = info;
+		}
+
+		public Check redacted() {
+			Map<String, String> redactedInfo = new HashMap<>();
+			redactedInfo.put("message", success ? "ok" : REDACTED_FAILURE);
+			return new Check(name, success, mandatory, null, redactedInfo);
 		}
 
 		public String getName() {

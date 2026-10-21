@@ -1009,6 +1009,9 @@ public class MaxwellConfig extends AbstractConfig {
 		parser.accepts( "http_bind_address", "the ip address the server will bind to when http reporting is configured" ).withRequiredArg();
 		parser.accepts( "http_diagnostic", "enable http diagnostic endpoint: true|false. default: false" ).withOptionalArg().ofType(Boolean.class);
 		parser.accepts( "http_diagnostic_timeout", "the http diagnostic response timeout in ms when http_diagnostic=true. default: 10000" ).withRequiredArg().ofType(Integer.class);
+		parser.accepts( "http_diagnostic_token", "bearer token required to call the http diagnostic endpoint. When unset, responses are redacted" ).withRequiredArg();
+		parser.accepts( "http_diagnostic_min_interval", "minimum ms between two diagnostic runs; requests in between get the cached result. default: 5000" ).withRequiredArg().ofType(Long.class);
+		parser.accepts( "http_diagnostic_kafka_topic", "kafka topic the diagnostic probe message is sent to. default: maxwell_diagnostic" ).withRequiredArg();
 		parser.accepts( "http_config", "enable http config update endpoint: true|false. default: false" ).withOptionalArg().ofType(Boolean.class);
 
 		parser.accepts( "help", "display help" ).withOptionalArg().forHelp();
@@ -1209,6 +1212,9 @@ public class MaxwellConfig extends AbstractConfig {
 		this.diagnosticConfig = new MaxwellDiagnosticContext.Config();
 		this.diagnosticConfig.enable = fetchBooleanOption("http_diagnostic", options, properties, false);
 		this.diagnosticConfig.timeout = fetchLongOption("http_diagnostic_timeout", options, properties, 10000L);
+		this.diagnosticConfig.token = fetchStringOption("http_diagnostic_token", options, properties, null);
+		this.diagnosticConfig.minInterval = fetchLongOption("http_diagnostic_min_interval", options, properties, MaxwellDiagnosticContext.Config.DEFAULT_MIN_INTERVAL_MS);
+		this.diagnosticConfig.kafkaTopic = fetchStringOption("http_diagnostic_kafka_topic", options, properties, MaxwellDiagnosticContext.Config.DEFAULT_KAFKA_TOPIC);
 
 		this.enableHttpConfig = fetchBooleanOption("http_config", options, properties, false);
 
@@ -1345,6 +1351,17 @@ public class MaxwellConfig extends AbstractConfig {
 	public void validate() {
 		validatePartitionBy();
 		validateFilter();
+
+		if ( this.diagnosticConfig != null ) {
+			if ( this.diagnosticConfig.minInterval < 0 ) {
+				usageForOptions("http_diagnostic_min_interval must be >= 0", "http_diagnostic_min_interval");
+			}
+
+			if ( this.diagnosticConfig.enable && "kafka".equals(this.producerType)
+					&& (this.diagnosticConfig.kafkaTopicMayMatch(this.kafkaTopic) || this.diagnosticConfig.kafkaTopicMayMatch(this.ddlKafkaTopic)) ) {
+				usageForOptions("http_diagnostic_kafka_topic must not be, or match, a CDC topic (kafka_topic / ddl_kafka_topic)", "http_diagnostic_kafka_topic");
+			}
+		}
 
 		if ( this.producerType.equals("kafka") ) {
 			if ( !this.kafkaProperties.containsKey("bootstrap.servers") ) {

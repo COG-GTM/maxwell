@@ -35,7 +35,12 @@ When the HTTP server is enabled the following endpoints are exposed:
 | `/prometheus`  | GET all metrics as Prometheus format                                           |
 | `/healthcheck` | run Maxwell's healthchecks.  Considered unhealthy if &gt;0 messages have failed in the last 15 minutes. |
 | `/ping`        | a simple ping test, responds with `pong`                                       |
-| `/diagnostics` | for kafka, send a fake message that measures the client to server latency      |
+| `/diagnostic`  | when `http_diagnostic=true`, write a heartbeat and (for kafka) send a probe message to `http_diagnostic_kafka_topic` to measure replication and producer latency |
+
+`/diagnostic` has side effects, so runs are shared between concurrent callers and cached for `http_diagnostic_min_interval`.
+Set `http_diagnostic_token` to require `Authorization: Bearer <token>`; without it the endpoint only answers loopback
+callers and omits the MySQL/Kafka addresses and error details. The HTTP server does not terminate TLS, so the token is sent
+in clear text: set `http_bind_address` to a private interface and/or put a TLS-terminating proxy in front of it.
 
 ## Custom Health Check
 Similar to the custom producer, developers can provide their own implementation of a health check.
