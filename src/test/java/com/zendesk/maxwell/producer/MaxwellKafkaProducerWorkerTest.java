@@ -98,7 +98,7 @@ public class MaxwellKafkaProducerWorkerTest {
 		ArgumentCaptor<ProducerRecord<String, String>> records = ArgumentCaptor.forClass(ProducerRecord.class);
 		verify(f.producer, times(4)).send(records.capture(), any());
 		assertEquals(
-				Arrays.asList("namespace_db_t_x", "namespace_db_a_1", "namespace_db_back_slash", "namespace_db_caf_"),
+				Arrays.asList("namespace_db_t_x", "namespace_db_a_1", "namespace_db_backslash", "namespace_db_caf_"),
 				records.getAllValues().stream().map(ProducerRecord::topic).collect(Collectors.toList()));
 		verify(f.context, never()).terminate(any());
 	}
@@ -137,7 +137,6 @@ public class MaxwellKafkaProducerWorkerTest {
 		MaxwellKafkaProducerWorker worker = f.worker("%{table}");
 
 		worker.sendAsync(rowMap("db", "bad_topic"), f.cc);
-		worker.drainDeadLetterQueue();
 
 		ArgumentCaptor<ProducerRecord<String, String>> record = ArgumentCaptor.forClass(ProducerRecord.class);
 		verify(f.producer).send(record.capture(), any());

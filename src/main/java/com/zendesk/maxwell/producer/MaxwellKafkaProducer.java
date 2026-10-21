@@ -248,6 +248,8 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 			// a table/database name can produce a topic kafka refuses; handle it like a failed send
 			// (dead letter topic / ignore_producer_error) instead of crashing on every replay of the row
 			makeCallback(r, cc, null).onCompletion(null, e);
+			// we're on the worker thread, so send any fallback record now rather than waiting for the next row
+			drainDeadLetterQueue();
 			return;
 		}
 

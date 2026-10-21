@@ -164,6 +164,11 @@ public class TopicInterpolatorTest {
 		assertThat(topic.generateKafkaTopicFromRowMap(rowMap("db", "caf\u00e9 \\")), equalTo("namespace_db_caf___"));
 		assertThat(topic.generateKafkaTopicFromRowIdentity(new RowIdentity("d$b", "t\\", null, null)), equalTo("namespace_d_b_t_"));
 
+		// String.replaceAll used to drop backslashes (`a\b` -> `ab`); keep existing kafka topics where they were
+		assertThat(topic.generateKafkaTopicFromRowMap(rowMap("db", "a\\b")), equalTo("namespace_db_ab"));
+		assertThat(topic.generateKafkaTopicFromRowMap(rowMap("db", "a\\b")),
+				equalTo("namespace_%{database}_%{table}".replaceAll("%\\{database\\}", "db").replaceAll("%\\{table\\}", "a\\b")));
+
 		TopicInterpolator plain = new TopicInterpolator("maxwell");
 		assertThat(plain.generateKafkaTopicFromRowMap(rowMap("db", "t$x")), equalTo("maxwell"));
 	}

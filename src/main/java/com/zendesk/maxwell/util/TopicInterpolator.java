@@ -4,6 +4,7 @@ import com.zendesk.maxwell.row.RowIdentity;
 import com.zendesk.maxwell.row.RowMap;
 
 import java.util.function.UnaryOperator;
+import java.util.regex.Pattern;
 
 /**
  * An utility class to interpolate subscription, channel templates.
@@ -14,6 +15,8 @@ import java.util.function.UnaryOperator;
  * - %{type}
  */
 public class TopicInterpolator {
+	private static final Pattern LEGACY_BACKSLASH_ESCAPE = Pattern.compile("\\\\(.)", Pattern.DOTALL);
+
 	private final String inputString;
 
 	private final boolean isInterpolated;
@@ -135,7 +138,12 @@ public class TopicInterpolator {
 		return value.replaceAll("([^A-Za-z0-9])", "_");
 	}
 
+	/*
+	 * Topics used to be built with String.replaceAll, which dropped a backslash and kept the character after it
+	 * (table `a\b` -> topic `ab`).  Keep doing that so existing topics don't move; a trailing backslash used to
+	 * throw and now becomes '_' like any other illegal character.
+	 */
 	private static String cleanupIllegalKafkaTopicCharacters(final String value) {
-		return value.replaceAll("[^A-Za-z0-9._-]", "_");
+		return LEGACY_BACKSLASH_ESCAPE.matcher(value).replaceAll("$1").replaceAll("[^A-Za-z0-9._-]", "_");
 	}
 }
