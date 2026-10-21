@@ -111,6 +111,7 @@ public class Maxwell implements Runnable {
 					config.filter,
 					false
 				);
+				oldServerSchemaStore.setServerVersion(context.getMysqlVersion());
 
 				// Note we associate this schema to the start position of the heartbeat event, so that
 				// we pick it up when resuming at the event after the heartbeat.

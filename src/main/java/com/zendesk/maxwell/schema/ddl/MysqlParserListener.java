@@ -305,6 +305,9 @@ public class MysqlParserListener extends mysqlBaseListener {
 				break;
 		}
 
+		if ( parens != 0 )
+			throw new MaxwellSQLSyntaxError("unbalanced parentheses");
+
 		r.insertBefore(startIndex, "/__MAXWELL__/");
 		r.delete(startIndex, i);
 		return r.getText();

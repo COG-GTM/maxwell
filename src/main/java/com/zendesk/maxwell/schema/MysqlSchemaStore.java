@@ -49,6 +49,7 @@ public class MysqlSchemaStore extends AbstractSchemaStore implements SchemaStore
 			context.getFilter(),
 			context.getReplayMode()
 		);
+		setServerVersion(context.getMysqlVersion());
 	}
 
 	public Schema getSchema() throws SchemaStoreException {

@@ -12,6 +12,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.zendesk.maxwell.MaxwellContext;
+import com.zendesk.maxwell.replication.MysqlVersion;
+import com.zendesk.maxwell.schema.ddl.ExecutableComment;
 import com.zendesk.maxwell.schema.ddl.SchemaChange;
 import com.zendesk.maxwell.schema.ddl.ResolvedSchemaChange;
 import com.zendesk.maxwell.schema.ddl.InvalidSchemaError;
@@ -22,6 +24,8 @@ public abstract class AbstractSchemaStore {
 	protected final ConnectionPool schemaConnectionPool;
 	protected final CaseSensitivity caseSensitivity;
 	private final Filter filter;
+	private int serverVersionId = ExecutableComment.ALL_VERSIONS;
+	private boolean serverIsMariaDB = false;
 
 	protected AbstractSchemaStore(ConnectionPool replicationConnectionPool,
 								  ConnectionPool schemaConnectionPool,
@@ -37,6 +41,15 @@ public abstract class AbstractSchemaStore {
 		this(context.getReplicationConnectionPool(), context.getSchemaConnectionPool(), context.getCaseSensitivity(), context.getFilter());
 	}
 
+	/**
+	 * @param serverVersion source server version, used to skip version-gated comments
+	 *                      in DDL that the server did not execute
+	 */
+	public void setServerVersion(MysqlVersion serverVersion) {
+		this.serverVersionId = serverVersion.getVersionId();
+		this.serverIsMariaDB = serverVersion.isMariaDB;
+	}
+
 	protected Schema captureSchema() throws SQLException {
 		LOGGER.info("Maxwell is capturing initial schema");
 		try(Connection connection = schemaConnectionPool.getConnection();
@@ -46,7 +59,7 @@ public abstract class AbstractSchemaStore {
 	}
 
 	protected List<ResolvedSchemaChange> resolveSQL(Schema schema, String sql, String currentDatabase) throws InvalidSchemaError {
-		List<SchemaChange> changes = SchemaChange.parse(currentDatabase, sql);
+		List<SchemaChange> changes = SchemaChange.parse(currentDatabase, sql, serverVersionId, serverIsMariaDB);
 
 		if ( changes == null || changes.size() == 0 )
 			return new ArrayList<>();

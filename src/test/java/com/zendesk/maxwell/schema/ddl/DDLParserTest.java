@@ -567,6 +567,81 @@ public class DDLParserTest {
 		assertThat(create.ifNotExists, is(true));
 	}
 
+	private static final int MYSQL_8_0_36 = 80036;
+
+	@Test
+	public void testVersionedCommentsNewerThanServerAreIgnored() {
+		TableCreate create = (TableCreate) SchemaChange.parse("default_db", "CREATE TABLE t (id int) /*!99999 ) */", MYSQL_8_0_36, false).get(0);
+		assertThat(create.table, is("t"));
+		assertThat(create.columns.size(), is(1));
+
+		create = (TableCreate) SchemaChange.parse("default_db", "CREATE TABLE t (id int /*!99999 , ) ' \" ` */, b int)", MYSQL_8_0_36, false).get(0);
+		assertThat(create.columns.size(), is(2));
+
+		create = (TableCreate) SchemaChange.parse("default_db", "CREATE TABLE t (id int, b int AS /*!99999 (( */ (id+1))", MYSQL_8_0_36, false).get(0);
+		assertThat(create.columns.size(), is(2));
+
+		create = (TableCreate) SchemaChange.parse("default_db", "CREATE TABLE t (id int, /*!100000 b int, */ c int)", MYSQL_8_0_36, false).get(0);
+		assertThat(create.columns.size(), is(2));
+	}
+
+	@Test
+	public void testVersionedCommentsAtOrBelowServerAreParsed() {
+		TableCreate create = (TableCreate) SchemaChange.parse("default_db", "CREATE TABLE /*!50000 IF NOT EXISTS */ foo (id int)", MYSQL_8_0_36, false).get(0);
+		assertThat(create.ifNotExists, is(true));
+
+		create = (TableCreate) SchemaChange.parse("default_db", "CREATE TABLE /*!80036 IF NOT EXISTS */ foo (id int)", MYSQL_8_0_36, false).get(0);
+		assertThat(create.ifNotExists, is(true));
+
+		create = (TableCreate) SchemaChange.parse("default_db", "CREATE TABLE /*!80037 IF NOT EXISTS */ foo (id int)", MYSQL_8_0_36, false).get(0);
+		assertThat(create.ifNotExists, is(false));
+
+		create = (TableCreate) SchemaChange.parse("default_db", "CREATE TABLE /*! IF NOT EXISTS */ foo (id int)", MYSQL_8_0_36, false).get(0);
+		assertThat(create.ifNotExists, is(true));
+
+		TableAlter alter = (TableAlter) SchemaChange.parse("default_db", "ALTER TABLE foo /*!50100 ADD COLUMN a int, */ ADD COLUMN b int", MYSQL_8_0_36, false).get(0);
+		assertThat(alter.columnMods.size(), is(2));
+	}
+
+	@Test
+	public void testMariaDBIgnoresMysqlStyleCommentsFrom50700To99999() {
+		int mariaDB_10_6_12 = 100612;
+		TableCreate create = (TableCreate) SchemaChange.parse("default_db", "CREATE TABLE t (id int) /*!80000 , ghost int */", mariaDB_10_6_12, true).get(0);
+		assertThat(create.columns.size(), is(1));
+
+		create = (TableCreate) SchemaChange.parse("default_db", "CREATE TABLE t (id int) /*!50700 ) */", mariaDB_10_6_12, true).get(0);
+		assertThat(create.columns.size(), is(1));
+
+		create = (TableCreate) SchemaChange.parse("default_db", "CREATE TABLE /*!50699 IF NOT EXISTS */ t (id int /*!100100 , b int */)", mariaDB_10_6_12, true).get(0);
+		assertThat(create.ifNotExists, is(true));
+		assertThat(create.columns.size(), is(2));
+
+		create = (TableCreate) SchemaChange.parse("default_db", "CREATE TABLE t (id int /*!100700 , b int */)", mariaDB_10_6_12, true).get(0);
+		assertThat(create.columns.size(), is(1));
+
+		List<SchemaChange> changes = SchemaChange.parse("default_db", "/*!80000 GRANT */ CREATE TABLE t (id int)", mariaDB_10_6_12, true);
+		assertThat(changes, is(notNullValue()));
+	}
+
+	@Test
+	public void testInactiveVersionedCommentDoesNotHideStatementFromBlacklist() {
+		List<SchemaChange> changes = SchemaChange.parse("default_db", "/*!99999 GRANT */ CREATE TABLE t (id int)", MYSQL_8_0_36, false);
+		assertThat(changes, is(notNullValue()));
+		assertThat(((TableCreate) changes.get(0)).table, is("t"));
+
+		assertThat(SchemaChange.parse("default_db", "/*!50003 GRANT */ CREATE TABLE t (id int)", MYSQL_8_0_36, false), is(nullValue()));
+	}
+
+	@Test
+	public void testUnbalancedSkippedParensRaiseSyntaxError() {
+		try {
+			parse("CREATE TABLE t (id int, b int AS ((id+1)");
+			throw new AssertionError("expected MaxwellSQLSyntaxError");
+		} catch ( MaxwellSQLSyntaxError e ) {
+			assertThat(e.getMessage(), containsString("unbalanced"));
+		}
+	}
+
 	@Test
 	public void testBinaryColumnDefaults() {
 		assertThat(parseCreate("CREATE TABLE foo (id boolean default true)"), is(notNullValue()));

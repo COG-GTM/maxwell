@@ -10,6 +10,31 @@ import mysql_literal_tokens,
        mysql_rename,
        mysql_view;
 
+@lexer::members {
+	private int serverVersionId = ExecutableComment.ALL_VERSIONS;
+	private boolean mariaDB = false;
+
+	public void setServerVersion(int serverVersionId, boolean mariaDB) {
+		this.serverVersionId = serverVersionId;
+		this.mariaDB = mariaDB;
+	}
+
+	/* MySQL ignores the whole body of a version-gated comment that is newer than the server. */
+	private void skipInactiveExecutableComment() {
+		if ( ExecutableComment.isActive(getText(), serverVersionId, mariaDB) )
+			return;
+
+		while ( _input.LA(1) != CharStream.EOF ) {
+			boolean closing = _input.LA(1) == '*' && _input.LA(2) == '/';
+			getInterpreter().consume(_input);
+			if ( closing ) {
+				getInterpreter().consume(_input);
+				return;
+			}
+		}
+	}
+}
+
 parse: statement?
        EOF;
 
