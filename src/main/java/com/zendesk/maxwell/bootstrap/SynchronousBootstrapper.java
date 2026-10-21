@@ -88,7 +88,7 @@ public class SynchronousBootstrapper {
 		}
 
 		Database database = schema.findDatabase(task.database);
-		Table table = database.findTable(task.table);
+		Table table = database == null ? null : database.findTable(task.table);
 
 		if ( table == null ) {
 			String errMsg = String.format(
@@ -116,13 +116,13 @@ public class SynchronousBootstrapper {
 		}
 
 		Filter filter = context.getFilter();
-		if ( !isTableIncluded(filter, task.database, task.table, null) )
-			throw new BootstrapAbortException(String.format("%s.%s is excluded by the configured filter", task.database, task.table));
+		if ( isTableBlacklisted(filter, task.database, task.table) )
+			throw new BootstrapAbortException(filteredOutMessage(task.database, task.table));
 
 		Table table = getTableForTask(task);
 
-		if ( !isTableIncluded(filter, table.database, table.name, table.getColumnNames()) )
-			throw new BootstrapAbortException(String.format("%s.%s is excluded by the configured filter", table.database, table.name));
+		if ( !shouldBootstrapTable(filter, table.database, table.name, table.getColumnNames()) )
+			throw new BootstrapAbortException(filteredOutMessage(table.database, table.name));
 
 		try ( Connection streamingConnection = getStreamingConnection(task.database) ) {
 			BootstrapWhereClause whereClause;
@@ -137,7 +137,7 @@ public class SynchronousBootstrapper {
 
 			try ( PreparedStatement statement = prepareSelectStatement(streamingConnection, task.database, task.table, table, whereClause);
 				  ResultSet resultSet = statement.executeQuery() ) {
-				streamRows(task, producer, currentSchemaID, table, filter, resultSet);
+				streamRows(task, producer, currentSchemaID, table, resultSet);
 			}
 		} catch ( NoSuchElementException e ) {
 			LOGGER.info("bootstrapping aborted for " + task.logString());
@@ -145,17 +145,20 @@ public class SynchronousBootstrapper {
 	}
 
 	private void streamRows(BootstrapTask task, AbstractProducer producer, Long currentSchemaID, Table table,
-							Filter filter, ResultSet resultSet) throws Exception {
+							ResultSet resultSet) throws Exception {
 		setBootstrapRowToStarted(task.id);
 		int insertedRows = 0;
 		lastInsertedRowsUpdateTimeMillis = 0; // ensure updateInsertedRowsColumn is called at least once
 		while ( resultSet.next() ) {
 			RowMap row = bootstrapEventRowMap("bootstrap-insert", table.database, table.name, table.getPKList(), task.comment);
 			setRowValues(row, resultSet, table);
-			row.setSchemaId(currentSchemaID);
 
-			if ( !Filter.includes(filter, table.database, table.name, row.getData()) )
+			if ( !shouldBootstrapRow(context.getFilter(), table.database, table.name, row) ) {
+				updateInsertedRowsColumn(insertedRows, task.id);
 				continue;
+			}
+
+			row.setSchemaId(currentSchemaID);
 
 			Scripting scripting = context.getConfig().scripting;
 			if ( scripting != null )
@@ -194,24 +197,53 @@ public class SynchronousBootstrapper {
 		return conn;
 	}
 
-	/**
-	 * Apply the same table-level filtering the binlog replicator applies, so that
-	 * excluded or blacklisted tables can't be pulled into the stream via a bootstrap.
-	 *
-	 * @param filter      the configured filter, may be null
-	 * @param database    database name
-	 * @param table       table name
-	 * @param columnNames the table's columns, or null if not yet known
-	 * @return whether rows of this table may be bootstrapped
-	 */
-	static boolean isTableIncluded(Filter filter, String database, String table, Set<String> columnNames) {
-		if ( Filter.isSystemBlacklisted(database, table) )
-			return false;
+	private static String filteredOutMessage(String database, String table) {
+		return String.format("%s.%s is excluded by the configured filter", database, table);
+	}
 
-		if ( Filter.includes(filter, database, table) )
+	static boolean isTableBlacklisted(Filter filter, String database, String table) {
+		if ( Filter.isSystemBlacklisted(database, table) )
 			return true;
 
-		return columnNames == null || Filter.couldIncludeFromColumnFilters(filter, database, table, columnNames);
+		return filter != null && filter.isTableBlacklisted(database, table);
+	}
+
+	/**
+	 * Whether a bootstrap of this table may emit anything at all.  Mirrors the
+	 * table-level check the binlog replicator applies before outputting row events.
+	 *
+	 * @param filter the active filter, or null
+	 * @param database database name
+	 * @param table table name
+	 * @param columnNames the table's columns, used to honor column-value include filters
+	 * @return false if the table is blacklisted or excluded by the filter
+	 */
+	static boolean shouldBootstrapTable(Filter filter, String database, String table, Set<String> columnNames) {
+		if ( isTableBlacklisted(filter, database, table) )
+			return false;
+
+		if ( filter == null || filter.isSystemWhitelisted(database, table) )
+			return true;
+
+		return filter.includes(database, table)
+			|| filter.couldIncludeFromColumnFilters(database, table, columnNames);
+	}
+
+	/**
+	 * Whether a single bootstrapped row passes the filter, including column-value filters.
+	 * Mirrors the row-level check the binlog replicator applies.
+	 *
+	 * @param filter the active filter, or null
+	 * @param database database name
+	 * @param table table name
+	 * @param row the row to check
+	 * @return whether the row may be pushed to the producer
+	 */
+	static boolean shouldBootstrapRow(Filter filter, String database, String table, RowMap row) {
+		if ( filter == null || filter.isSystemWhitelisted(database, table) )
+			return true;
+
+		return filter.includes(database, table, row.getData());
 	}
 
 	private Connection getStreamingConnection(String databaseName) throws SQLException, URISyntaxException {

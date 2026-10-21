@@ -69,7 +69,9 @@ account can see, and only grant it to principals trusted with that data.
 To limit exposure:
 
 - tables excluded or blacklisted by your [filter](/filtering) are never
-  bootstrapped, and value filters are applied to every `bootstrap-insert` row
+  bootstrapped: the task is marked complete without emitting any rows (not even
+  `bootstrap-start` / `bootstrap-complete`), and column-value filters are applied
+  to every `bootstrap-insert` row, just as they are for binlog rows
 - set `bootstrapper_user` / `bootstrapper_password` to a mysql account that only
   has `SELECT` on the schemas you replicate
 
