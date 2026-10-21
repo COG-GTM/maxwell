@@ -28,6 +28,7 @@ public class MaxwellConfigServlet extends HttpServlet {
 	private static final java.lang.String CONTENT_TYPE = "application/json";
 	private static final ObjectMapper mapper = new ObjectMapper();
 	static final int MAX_BODY_LENGTH = 128 * 1024;
+	static final int MAX_AUTHORIZATION_LENGTH = 1024;
 	static final Logger LOGGER = LoggerFactory.getLogger(MaxwellConfigServlet.class);
 	private final MaxwellContext context;
 
@@ -92,7 +93,7 @@ public class MaxwellConfigServlet extends HttpServlet {
 			return true;
 
 		String header = req.getHeader("Authorization");
-		if ( header == null || !header.regionMatches(true, 0, "Bearer ", 0, 7) )
+		if ( header == null || header.length() > MAX_AUTHORIZATION_LENGTH || !header.regionMatches(true, 0, "Bearer ", 0, 7) )
 			return false;
 
 		byte[] presented = header.substring(7).trim().getBytes(StandardCharsets.UTF_8);

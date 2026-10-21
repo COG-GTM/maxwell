@@ -1218,8 +1218,6 @@ public class MaxwellConfig extends AbstractConfig {
 
 		this.enableHttpConfig = fetchBooleanOption("http_config", options, properties, false);
 		this.httpConfigToken = fetchStringOption("http_config_token", options, properties, null);
-		if ( this.httpConfigToken != null && this.httpConfigToken.isEmpty() )
-			this.httpConfigToken = null;
 
 		this.filterList          = fetchStringOption("filter", options, properties, null);
 		this.ignoreMissingSchema          =  fetchBooleanOption("ignore_missing_schema", options, properties, false);
@@ -1352,6 +1350,8 @@ public class MaxwellConfig extends AbstractConfig {
 	 * Validate the maxwell configuration, exiting with an error message if invalid.
 	 */
 	public void validate() {
+		if ( this.httpConfigToken != null && this.httpConfigToken.trim().isEmpty() )
+			usageForOptions("http_config_token must not be empty; omit it to disable /config authentication", "http_config_token");
 		validatePartitionBy();
 		validateFilter();
 

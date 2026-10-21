@@ -62,6 +62,13 @@ public class MaxwellConfigServletTest {
 	}
 
 	@Test
+	public void testInvalidQuotedPatternReturns400() throws Exception {
+		servlet.service(request("POST", "{\"filter\":\"include: 'foo['.bar\"}", null), resp);
+		verify(resp).setStatus(400);
+		assertTrue(output.toString().contains("invalid filter: invalid regexp"));
+	}
+
+	@Test
 	public void testOversizedBodyReturns413() throws Exception {
 		StringBuilder sb = new StringBuilder("{\"filter\":\"include: db./");
 		while ( sb.length() <= MaxwellConfigServlet.MAX_BODY_LENGTH )
@@ -86,6 +93,14 @@ public class MaxwellConfigServletTest {
 		when(wrongResp.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
 		servlet.service(request("GET", null, "Bearer wrong"), wrongResp);
 		verify(wrongResp).setStatus(401);
+
+		HttpServletResponse longResp = mock(HttpServletResponse.class);
+		when(longResp.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
+		StringBuilder longHeader = new StringBuilder("Bearer s3cret-token");
+		while ( longHeader.length() <= MaxwellConfigServlet.MAX_AUTHORIZATION_LENGTH )
+			longHeader.append(' ');
+		servlet.service(request("GET", null, longHeader.toString()), longResp);
+		verify(longResp).setStatus(401);
 
 		HttpServletResponse okResp = mock(HttpServletResponse.class);
 		when(okResp.getWriter()).thenReturn(new PrintWriter(new StringWriter()));

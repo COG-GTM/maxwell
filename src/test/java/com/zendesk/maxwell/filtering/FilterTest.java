@@ -163,6 +163,16 @@ public class FilterTest {
 		}
 	}
 
+	@Test
+	public void TestInvalidQuotedPatternIsRejected() throws Exception {
+		try {
+			runParserTest("include: 'foo['.bar");
+			fail("expected InvalidFilterException");
+		} catch ( InvalidFilterException e ) {
+			assertTrue(e.getMessage().startsWith("invalid regexp"));
+		}
+	}
+
 	@Test(timeout = 5000)
 	public void TestOversizedFilterIsRejected() throws Exception {
 		StringBuilder sb = new StringBuilder("include: db./");

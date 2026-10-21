@@ -123,25 +123,25 @@ public class FilterParser {
 
 	private Pattern parsePattern() throws IOException {
 		Pattern pattern;
-		switch ( tokenizer.ttype ) {
-			case '/':
-				try {
+		try {
+			switch ( tokenizer.ttype ) {
+				case '/':
 					pattern = Pattern.compile(parseRegexp());
-				} catch ( PatternSyntaxException e ) {
-					throw new IOException("invalid regexp: " + e.getDescription());
-				}
-				break;
-			case '*':
-				pattern = Pattern.compile("");
-				break;
-			case TT_WORD:
-			case '`':
-			case '\'':
-			case '"':
-				pattern = Pattern.compile("^" + tokenizer.sval + "$");
-				break;
-			default:
-				throw new IOException("Expected string or regexp, saw '" + Character.toString((char) tokenizer.ttype));
+					break;
+				case '*':
+					pattern = Pattern.compile("");
+					break;
+				case TT_WORD:
+				case '`':
+				case '\'':
+				case '"':
+					pattern = Pattern.compile("^" + tokenizer.sval + "$");
+					break;
+				default:
+					throw new IOException("Expected string or regexp, saw '" + Character.toString((char) tokenizer.ttype));
+			}
+		} catch ( PatternSyntaxException e ) {
+			throw new IOException("invalid regexp: " + e.getDescription());
 		}
 		tokenizer.nextToken();
 		return pattern;
