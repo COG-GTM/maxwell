@@ -1342,13 +1342,6 @@ public class MaxwellConfig extends AbstractConfig {
 	/**
 	 * Validate the maxwell configuration, exiting with an error message if invalid.
 	 */
-	private void warnOnInsecurePublicKeyRetrieval(String prefix, MaxwellMysqlConfig config) {
-		if ( config.hasInsecurePublicKeyRetrieval() ) {
-			LOGGER.warn("{}jdbc_options sets allowPublicKeyRetrieval=true without {}ssl=REQUIRED|VERIFY_CA|VERIFY_IDENTITY; "
-				+ "a man-in-the-middle can recover the mysql password. Prefer TLS or serverRSAPublicKeyFile.", prefix, prefix);
-		}
-	}
-
 	public void validate() {
 		validatePartitionBy();
 		validateFilter();

@@ -168,6 +168,10 @@ public class MaxwellBootstrapUtilityConfig extends AbstractConfig {
 				replicationMysql.password = mysql.password;
 		}
 
+		warnOnInsecurePublicKeyRetrieval("", this.mysql);
+		if ( this.replicationMysql != this.mysql )
+			warnOnInsecurePublicKeyRetrieval("replication_", this.replicationMysql);
+
 		this.schemaDatabaseName = fetchStringOption("schema_database", options, properties, "maxwell");
 		this.clientID = fetchStringOption("client_id", options, properties, "maxwell");
 
