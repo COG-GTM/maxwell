@@ -24,7 +24,7 @@ public class FilterTest {
 		assertEquals(1, filters.size());
 		assertEquals(FilterPatternType.INCLUDE, filters.get(0).getType());
 		assertEquals(Pattern.compile("foo.*").toString(), filters.get(0).getDatabasePattern().toString());
-		assertEquals(Pattern.compile("^bar$").toString(), filters.get(0).getTablePattern().toString());
+		assertEquals("bar", FilterParser.literalValue(filters.get(0).getTablePattern()));
 	}
 
 	@Test
@@ -32,7 +32,7 @@ public class FilterTest {
 		filters = runParserTest("blacklist:foo.*");
 		assertEquals(1, filters.size());
 		assertEquals(FilterPatternType.BLACKLIST, filters.get(0).getType());
-		assertEquals(Pattern.compile("^foo$").toString(), filters.get(0).getDatabasePattern().toString());
+		assertEquals("foo", FilterParser.literalValue(filters.get(0).getDatabasePattern()));
 	}
 
 	@Test
@@ -45,7 +45,7 @@ public class FilterTest {
 		for ( String test : tests ) {
 			filters = runParserTest(test);
 			assertEquals(1, filters.size());
-			assertEquals(Pattern.compile("^foo$").toString(), filters.get(0).getDatabasePattern().toString());
+			assertEquals("foo", FilterParser.literalValue(filters.get(0).getDatabasePattern()));
 		}
 	}
 
@@ -252,9 +252,45 @@ public class FilterTest {
 	}
 
 	@Test
+	public void TestLiteralsDoNotMatchTrailingNewline() throws Exception {
+		Map<String, Object> map = new HashMap<>();
+		Filter f = new Filter("exclude: *.*, include: db.tbl.col=approved");
+		map.put("col", "approved");
+		assertTrue(f.includes("db", "tbl", map));
+		map.put("col", "approved\n");
+		assertFalse(f.includes("db", "tbl", map));
+
+		f = new Filter("exclude: db.tbl");
+		assertTrue(f.includes("db", "tbl\n"));
+		assertFalse(f.includes("db", "tbl"));
+	}
+
+	@Test
+	public void TestControlCharactersRoundTrip() throws Exception {
+		Map<String, Object> map = new HashMap<>();
+		Filter f = new Filter("exclude: db.tbl.col=`a\\nb\\rc`");
+		assertEquals("exclude: db.tbl.col=`a\\nb\\rc`", f.toString());
+
+		Filter reparsed = new Filter(f.toString());
+		assertEquals(f.toString(), reparsed.toString());
+		map.put("col", "a\nb\rc");
+		assertFalse(reparsed.includes("db", "tbl", map));
+		map.put("col", "anbrc");
+		assertTrue(reparsed.includes("db", "tbl", map));
+	}
+
+	@Test
+	public void TestRegexpNullColumnValue() throws Exception {
+		Map<String, Object> map = new HashMap<>();
+		map.put("col", null);
+		Filter f = new Filter("exclude: *.*, include: foo.bar.col=/^null$/");
+		assertTrue(f.includes("foo", "bar", map));
+	}
+
+	@Test
 	public void TestLiteralPatternsKeepPlainForm() throws Exception {
 		filters = runParserTest("include: 'foo$bar'.baz");
-		assertEquals("^foo\\$bar$", filters.get(0).getDatabasePattern().pattern());
-		assertEquals("^baz$", filters.get(0).getTablePattern().pattern());
+		assertEquals("\\Afoo\\$bar\\z", filters.get(0).getDatabasePattern().pattern());
+		assertEquals("\\Abaz\\z", filters.get(0).getTablePattern().pattern());
 	}
 }

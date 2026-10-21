@@ -14,6 +14,7 @@ import java.util.regex.PatternSyntaxException;
 import static java.io.StreamTokenizer.*;
 
 public class FilterParser {
+	private static final String LITERAL_START = "\\A", LITERAL_END = "\\z";
 	private static final String REGEX_METACHARS = "\\.[]{}()<>*+-=!?^$|&#~,:/ ";
 	private static final Pattern BARE_IDENTIFIER = Pattern.compile("[A-Za-z0-9_\\u00a0-\\u00ff]+");
 
@@ -170,7 +171,7 @@ public class FilterParser {
 	}
 
 	static Pattern literalPattern(String name) {
-		return Pattern.compile("^" + escapeLiteral(name) + "$");
+		return Pattern.compile(LITERAL_START + escapeLiteral(name) + LITERAL_END);
 	}
 
 	static String escapeLiteral(String name) {
@@ -189,10 +190,11 @@ public class FilterParser {
 	 */
 	static String literalValue(Pattern p) {
 		String s = p.pattern();
-		if ( s.length() < 2 || !s.startsWith("^") || !s.endsWith("$") )
+		int minLength = LITERAL_START.length() + LITERAL_END.length();
+		if ( s.length() < minLength || !s.startsWith(LITERAL_START) || !s.endsWith(LITERAL_END) )
 			return null;
 
-		String body = s.substring(1, s.length() - 1);
+		String body = s.substring(LITERAL_START.length(), s.length() - LITERAL_END.length());
 		StringBuilder name = new StringBuilder(body.length());
 		for ( int i = 0; i < body.length(); i++ ) {
 			char c = body.charAt(i);
@@ -211,6 +213,9 @@ public class FilterParser {
 	static String quoteIdentifier(String name) {
 		if ( BARE_IDENTIFIER.matcher(name).matches() )
 			return name;
-		return "`" + name.replace("\\", "\\\\").replace("`", "\\`") + "`";
+		return "`" + name.replace("\\", "\\\\")
+			.replace("`", "\\`")
+			.replace("\n", "\\n")
+			.replace("\r", "\\r") + "`";
 	}
 }
