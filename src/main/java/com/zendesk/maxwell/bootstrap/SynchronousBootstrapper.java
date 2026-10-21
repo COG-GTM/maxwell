@@ -58,15 +58,40 @@ public class SynchronousBootstrapper {
 	 * @throws Exception
 	 */
 	public void startBootstrap(BootstrapTask task, AbstractProducer producer, Long currentSchemaID) throws Exception {
+		BootstrapOutputProducer output = new BootstrapOutputProducer(context, producer);
 		try {
-			performBootstrap(task, producer, currentSchemaID);
+			performBootstrap(task, output, currentSchemaID);
 		} catch ( BootstrapAbortException e ) {
-			LOGGER.error("Bootstrap (id={}) aborted: {}", task.id, e.getMessage());
-			setBootstrapRowToCompleted(0, task.id);
+			abortBootstrap(task, e.getMessage());
 			return;
+		} catch ( InterruptedException | DuplicateProcessException | BootstrapDeliveryException e ) {
+			throw e;
+		} catch ( Exception e ) {
+			if ( output.hasStarted() )
+				output.push(bootstrapEventRowMap("bootstrap-abort", task.database, task.table, new ArrayList<>(), task.comment));
+			throw e;
 		}
-		completeBootstrap(task, producer);
+		completeBootstrap(task, output);
 	}
+
+	/**
+	 * Give up on a bootstrap task: log the reason and mark its row complete so
+	 * that it is not picked up again.  inserted_rows keeps the last recorded progress.
+	 *
+	 * @param task   the bootstrap task
+	 * @param reason why the task is being abandoned
+	 * @throws Exception if the bootstrap row can't be updated
+	 */
+	public void abortBootstrap(BootstrapTask task, String reason) throws Exception {
+		LOGGER.error("Bootstrap (id={}) aborted: {}", task.id, reason);
+		this.context.getMaxwellConnectionPool().withSQLRetry(1, (connection) -> {
+			PreparedStatement preparedStatement = connection.prepareStatement(abortBootstrapSQL);
+			preparedStatement.setLong(1, task.id);
+			preparedStatement.executeUpdate();
+		});
+	}
+
+	private final String abortBootstrapSQL = "update `bootstrap` set is_complete=1, completed_at=NOW() where id=?";
 
 	private Schema captureSchemaForBootstrap(BootstrapTask task) throws SQLException {
 		try ( Connection cx = getConnection(task.database) ) {
@@ -85,7 +110,7 @@ public class SynchronousBootstrapper {
 		}
 
 		Database database = schema.findDatabase(task.database);
-		Table table = database.findTable(task.table);
+		Table table = database == null ? null : database.findTable(task.table);
 
 		if ( table == null ) {
 			String errMsg = String.format(
