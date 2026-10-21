@@ -12,7 +12,10 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.ResultSetMetaData;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * MaxwellBootstrapUtility is a command line utility that launches and monitors the progress of bootstrapping.
@@ -65,6 +68,9 @@ public class MaxwellBootstrapUtility {
 				Runtime.getRuntime().halt(1);
 			}
 
+		} catch ( BootstrapWhereClause.InvalidWhereClauseException e ) {
+			LOGGER.error("invalid --where: " + e.getMessage());
+			System.exit(1);
 		} catch ( SQLException e ) {
 			LOGGER.error("failed to connect to mysql server @ " + config.getConnectionURI());
 			LOGGER.error(e.getLocalizedMessage());
@@ -163,17 +169,36 @@ public class MaxwellBootstrapUtility {
 		}
 	}
 
-	private Long calculateRowCount(Connection connection, String db, String table, String whereClause) throws SQLException {
+	private Long calculateRowCount(Connection connection, String db, String table, String whereClause) throws SQLException, BootstrapWhereClause.InvalidWhereClauseException {
 		LOGGER.info("counting rows");
-		String sql = "select count(*) from " + Sql.quoteIdentifier(db) + "." + Sql.quoteIdentifier(table);
-		if ( whereClause != null ) {
-			sql += String.format(" where %s", whereClause);
+		String from = Sql.quoteIdentifier(db) + "." + Sql.quoteIdentifier(table);
+		BootstrapWhereClause parsedWhere = null;
+		if ( whereClause != null && !whereClause.trim().isEmpty() )
+			parsedWhere = BootstrapWhereClause.parse(whereClause, getColumnNames(connection, from), connection);
+
+		String sql = "select count(*) from " + from;
+		if ( parsedWhere != null ) {
+			sql += " where " + parsedWhere.getSQL();
 		}
-		try ( PreparedStatement preparedStatement = connection.prepareStatement(sql);
-			  ResultSet resultSet = preparedStatement.executeQuery() ) {
-			resultSet.next();
-			return resultSet.getLong(1);
+		try ( PreparedStatement preparedStatement = connection.prepareStatement(sql) ) {
+			if ( parsedWhere != null )
+				parsedWhere.bind(preparedStatement, 1);
+			try ( ResultSet resultSet = preparedStatement.executeQuery() ) {
+				resultSet.next();
+				return resultSet.getLong(1);
+			}
 		}
+	}
+
+	private List<String> getColumnNames(Connection connection, String quotedTable) throws SQLException {
+		List<String> columns = new ArrayList<>();
+		try ( Statement s = connection.createStatement();
+			  ResultSet rs = s.executeQuery("select * from " + quotedTable + " limit 0") ) {
+			ResultSetMetaData md = rs.getMetaData();
+			for ( int i = 1; i <= md.getColumnCount(); i++ )
+				columns.add(md.getColumnName(i));
+		}
+		return columns;
 	}
 
 	private long insertBootstrapStartRow(Connection connection, String db, String table, String whereClause, String clientID, String comment, Long totalRows) throws SQLException {

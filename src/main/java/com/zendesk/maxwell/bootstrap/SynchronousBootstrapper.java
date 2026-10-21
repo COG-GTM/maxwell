@@ -3,7 +3,9 @@ package com.zendesk.maxwell.bootstrap;
 import com.zendesk.maxwell.CaseSensitivity;
 import com.zendesk.maxwell.MaxwellMysqlStatus;
 import com.zendesk.maxwell.errors.DuplicateProcessException;
+import com.zendesk.maxwell.filtering.Filter;
 import com.zendesk.maxwell.producer.MaxwellOutputConfig;
+import com.zendesk.maxwell.MaxwellConfig;
 import com.zendesk.maxwell.MaxwellContext;
 import com.zendesk.maxwell.producer.AbstractProducer;
 import com.zendesk.maxwell.row.RowMap;
@@ -26,6 +28,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -85,7 +88,7 @@ public class SynchronousBootstrapper {
 		}
 
 		Database database = schema.findDatabase(task.database);
-		Table table = database.findTable(task.table);
+		Table table = database == null ? null : database.findTable(task.table);
 
 		if ( table == null ) {
 			String errMsg = String.format(
@@ -112,37 +115,64 @@ public class SynchronousBootstrapper {
 			LOGGER.debug("bootstrapping requested for {}", task.logString());
 		}
 
+		Filter filter = context.getFilter();
+		if ( isTableBlacklisted(filter, task.database, task.table) )
+			throw new BootstrapAbortException(filteredOutMessage(task.database, task.table));
+
 		Table table = getTableForTask(task);
 
-		producer.push(bootstrapStartRowMap(task, table));
-		LOGGER.info(String.format("bootstrapping started for %s.%s", task.database, task.table));
+		if ( !shouldBootstrapTable(filter, table.database, table.name, table.getColumnNames()) )
+			throw new BootstrapAbortException(filteredOutMessage(table.database, table.name));
 
-		try ( Connection streamingConnection = getStreamingConnection(task.database)) {
-			setBootstrapRowToStarted(task.id);
-			ResultSet resultSet = getAllRows(task.database, task.table, table, task.whereClause, streamingConnection);
-			int insertedRows = 0;
-			lastInsertedRowsUpdateTimeMillis = 0; // ensure updateInsertedRowsColumn is called at least once
-			while ( resultSet.next() ) {
-				RowMap row = bootstrapEventRowMap("bootstrap-insert", table.database, table.name, table.getPKList(), task.comment);
-				setRowValues(row, resultSet, table);
-				row.setSchemaId(currentSchemaID);
-
-				Scripting scripting = context.getConfig().scripting;
-				if ( scripting != null )
-					scripting.invoke(row);
-
-				if ( LOGGER.isDebugEnabled() )
-					LOGGER.debug("bootstrapping row : {}", row.toJSON());
-
-				producer.push(row);
-				++insertedRows;
-
-				updateInsertedRowsColumn(insertedRows, task.id);
+		try ( Connection streamingConnection = getStreamingConnection(task.database) ) {
+			BootstrapWhereClause whereClause;
+			try {
+				whereClause = BootstrapWhereClause.parse(task.whereClause, table.getColumnNames(), streamingConnection);
+			} catch ( BootstrapWhereClause.InvalidWhereClauseException e ) {
+				throw new BootstrapAbortException("rejected where_clause: " + e.getMessage());
 			}
-			setBootstrapRowToCompleted(insertedRows, task.id);
+
+			producer.push(bootstrapStartRowMap(task, table));
+			LOGGER.info(String.format("bootstrapping started for %s.%s", task.database, task.table));
+
+			try ( PreparedStatement statement = prepareSelectStatement(streamingConnection, task.database, task.table, table, whereClause);
+				  ResultSet resultSet = statement.executeQuery() ) {
+				streamRows(task, producer, currentSchemaID, table, resultSet);
+			}
 		} catch ( NoSuchElementException e ) {
 			LOGGER.info("bootstrapping aborted for " + task.logString());
 		}
+	}
+
+	private void streamRows(BootstrapTask task, AbstractProducer producer, Long currentSchemaID, Table table,
+							ResultSet resultSet) throws Exception {
+		setBootstrapRowToStarted(task.id);
+		int insertedRows = 0;
+		lastInsertedRowsUpdateTimeMillis = 0; // ensure updateInsertedRowsColumn is called at least once
+		while ( resultSet.next() ) {
+			RowMap row = bootstrapEventRowMap("bootstrap-insert", table.database, table.name, table.getPKList(), task.comment);
+			setRowValues(row, resultSet, table);
+
+			if ( !shouldBootstrapRow(context.getFilter(), table.database, table.name, row) ) {
+				updateInsertedRowsColumn(insertedRows, task.id);
+				continue;
+			}
+
+			row.setSchemaId(currentSchemaID);
+
+			Scripting scripting = context.getConfig().scripting;
+			if ( scripting != null )
+				scripting.invoke(row);
+
+			if ( LOGGER.isDebugEnabled() )
+				LOGGER.debug("bootstrapping row : {}", row.toJSON());
+
+			producer.push(row);
+			++insertedRows;
+
+			updateInsertedRowsColumn(insertedRows, task.id);
+		}
+		setBootstrapRowToCompleted(insertedRows, task.id);
 	}
 
 	private void updateInsertedRowsColumn(int insertedRows, Long id) throws SQLException, NoSuchElementException, DuplicateProcessException {
@@ -167,8 +197,69 @@ public class SynchronousBootstrapper {
 		return conn;
 	}
 
+	private static String filteredOutMessage(String database, String table) {
+		return String.format("%s.%s is excluded by the configured filter", database, table);
+	}
+
+	static boolean isTableBlacklisted(Filter filter, String database, String table) {
+		if ( Filter.isSystemBlacklisted(database, table) )
+			return true;
+
+		return filter != null && filter.isTableBlacklisted(database, table);
+	}
+
+	/**
+	 * Whether a bootstrap of this table may emit anything at all.  Mirrors the
+	 * table-level check the binlog replicator applies before outputting row events.
+	 *
+	 * @param filter the active filter, or null
+	 * @param database database name
+	 * @param table table name
+	 * @param columnNames the table's columns, used to honor column-value include filters
+	 * @return false if the table is blacklisted or excluded by the filter
+	 */
+	static boolean shouldBootstrapTable(Filter filter, String database, String table, Set<String> columnNames) {
+		if ( isTableBlacklisted(filter, database, table) )
+			return false;
+
+		if ( filter == null || filter.isSystemWhitelisted(database, table) )
+			return true;
+
+		return filter.includes(database, table)
+			|| filter.couldIncludeFromColumnFilters(database, table, columnNames);
+	}
+
+	/**
+	 * Whether a single bootstrapped row passes the filter, including column-value filters.
+	 * Mirrors the row-level check the binlog replicator applies.
+	 *
+	 * @param filter the active filter, or null
+	 * @param database database name
+	 * @param table table name
+	 * @param row the row to check
+	 * @return whether the row may be pushed to the producer
+	 */
+	static boolean shouldBootstrapRow(Filter filter, String database, String table, RowMap row) {
+		if ( isTableBlacklisted(filter, database, table) )
+			return false;
+
+		if ( filter == null || filter.isSystemWhitelisted(database, table) )
+			return true;
+
+		return filter.includes(database, table, row.getData());
+	}
+
 	private Connection getStreamingConnection(String databaseName) throws SQLException, URISyntaxException {
-		Connection conn = DriverManager.getConnection(context.getConfig().replicationMysql.getConnectionURI(false), context.getConfig().replicationMysql.user, context.getConfig().replicationMysql.password);
+		MaxwellConfig config = context.getConfig();
+		String user = config.replicationMysql.user;
+		String password = config.replicationMysql.password;
+
+		if ( config.bootstrapperUser != null ) {
+			user = config.bootstrapperUser;
+			password = config.bootstrapperPassword;
+		}
+
+		Connection conn = DriverManager.getConnection(config.replicationMysql.getConnectionURI(false), user, password);
 		conn.setCatalog(databaseName);
 		return conn;
 	}
@@ -201,10 +292,17 @@ public class SynchronousBootstrapper {
 		LOGGER.info("bootstrapping ended for " + task.logString());
 	}
 
-	private ResultSet getAllRows(String databaseName, String tableName, Table table, String whereClause,
-								 Connection connection) throws SQLException {
-		Statement statement = createBatchStatement(connection);
-		return statement.executeQuery(buildSelectSQL(databaseName, tableName, table, whereClause));
+	private PreparedStatement prepareSelectStatement(Connection connection, String databaseName, String tableName,
+													 Table table, BootstrapWhereClause whereClause) throws SQLException {
+		PreparedStatement statement = connection.prepareStatement(
+			buildSelectSQL(databaseName, tableName, table, whereClause),
+			ResultSet.TYPE_FORWARD_ONLY,
+			ResultSet.CONCUR_READ_ONLY
+		);
+		statement.setFetchSize(Integer.MIN_VALUE);
+		if ( whereClause != null )
+			whereClause.bind(statement, 1);
+		return statement;
 	}
 
 	/**
@@ -212,20 +310,21 @@ public class SynchronousBootstrapper {
 	 *
 	 * All identifiers are quoted, so that tables and columns named after reserved
 	 * words (a primary key column called `key`, say) don't produce a syntax error.
-	 * The where clause is user-supplied SQL and is passed through untouched.
+	 * The where clause has already been validated by {@link BootstrapWhereClause};
+	 * its literals are `?` placeholders bound by the caller.
 	 *
 	 * @param databaseName the database to bootstrap from
 	 * @param tableName the table to bootstrap
 	 * @param table the captured schema for that table, used for the primary key
-	 * @param whereClause optional user-supplied filter, may be null
+	 * @param whereClause optional parsed filter, may be null
 	 * @return the select statement to execute
 	 */
-	static String buildSelectSQL(String databaseName, String tableName, Table table, String whereClause) {
+	static String buildSelectSQL(String databaseName, String tableName, Table table, BootstrapWhereClause whereClause) {
 		String sql = "select * from "
 			+ Sql.quoteIdentifier(databaseName) + "." + Sql.quoteIdentifier(tableName);
 
-		if ( whereClause != null && !whereClause.equals("") ) {
-			sql += String.format(" where %s", whereClause);
+		if ( whereClause != null ) {
+			sql += " where " + whereClause.getSQL();
 		}
 
 		List<String> pkList = table.getPKList();
@@ -237,12 +336,6 @@ public class SynchronousBootstrapper {
 		}
 
 		return sql;
-	}
-
-	private Statement createBatchStatement(Connection connection) throws SQLException {
-		Statement statement = connection.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
-		statement.setFetchSize(Integer.MIN_VALUE);
-		return statement;
 	}
 
 	private final String startBootstrapSQL = "update `bootstrap` set started_at=NOW() where id=?";
