@@ -10,22 +10,24 @@ import java.util.stream.Collectors;
 public class Filter {
 	static final Logger LOGGER = LoggerFactory.getLogger(Filter.class);
 
-	private final List<FilterPattern> patterns;
+	// Immutable snapshot, replaced wholesale so readers on the replicator thread
+	// never observe a partially-updated rule set.
+	private volatile List<FilterPattern> patterns;
 	private String maxwellDB;
 
 	public Filter() {
-		this.patterns = new ArrayList<>();
+		this.patterns = Collections.emptyList();
 		this.maxwellDB = "maxwell";
 	}
 	public Filter(String filterString) throws InvalidFilterException {
 		this();
-		patterns.addAll(new FilterParser(filterString).parse());
+		this.patterns = List.copyOf(new FilterParser(filterString).parse());
 	}
 
 	public Filter(String maxwellDB, String filterString) throws InvalidFilterException {
 		this();
 		this.maxwellDB = maxwellDB;
-		patterns.addAll(new FilterParser(filterString).parse());
+		this.patterns = List.copyOf(new FilterParser(filterString).parse());
 	}
 
 	@Override
@@ -35,10 +37,8 @@ public class Filter {
 			.collect(Collectors.joining(", "));
 	}
 
-	public void set(String filterString) throws InvalidFilterException {
-		List<FilterPattern> parsedFilter = new FilterParser(filterString).parse();
-		this.patterns.clear();
-		this.patterns.addAll(parsedFilter);
+	public synchronized void set(String filterString) throws InvalidFilterException {
+		this.patterns = List.copyOf(new FilterParser(filterString).parse());
 	}
 
 	public boolean isSystemWhitelisted(String database, String table) {
@@ -50,8 +50,10 @@ public class Filter {
 		return maxwellDB.equals(database);
 	}
 
-	public void addRule(String filterString) throws InvalidFilterException {
-		this.patterns.addAll(new FilterParser(filterString).parse());
+	public synchronized void addRule(String filterString) throws InvalidFilterException {
+		List<FilterPattern> updated = new ArrayList<>(this.patterns);
+		updated.addAll(new FilterParser(filterString).parse());
+		this.patterns = List.copyOf(updated);
 	}
 
 	public List<FilterPattern> getRules() {
@@ -62,7 +64,7 @@ public class Filter {
 	public boolean includes(String database, String table) {
 		FilterResult match = new FilterResult();
 
-		for ( FilterPattern p : patterns )
+		for ( FilterPattern p : this.patterns )
 			p.match(database, table, match);
 
 		return match.include;
@@ -71,14 +73,14 @@ public class Filter {
 	public boolean includes(String database, String table, Map<String, Object> values) {
 		FilterResult match = new FilterResult();
 
-		for ( FilterPattern p : patterns )
+		for ( FilterPattern p : this.patterns )
 			p.matchValue(database, table, values, match);
 
 		return match.include;
 	}
 
 	public boolean couldIncludeFromColumnFilters(String database, String table, Set<String> columns) {
-		for ( FilterPattern p : patterns ) {
+		for ( FilterPattern p : this.patterns ) {
 			if ( p.couldIncludeColumn(database, table, columns) )
 				return true;
 		}
@@ -95,7 +97,7 @@ public class Filter {
 
 		FilterResult match = new FilterResult();
 
-		for ( FilterPattern p : patterns ) {
+		for ( FilterPattern p : this.patterns ) {
 			if ( p.getType() == FilterPatternType.BLACKLIST )
 				p.match(database, table, match);
 		}
@@ -107,7 +109,7 @@ public class Filter {
 		if ( isMaxwellDB(database) )
 			return false;
 
-		for ( FilterPattern p : patterns ) {
+		for ( FilterPattern p : this.patterns ) {
 			if (p.getType() == FilterPatternType.BLACKLIST &&
 				p.getDatabasePattern().matcher(database).find() &&
 				p.getTablePattern().toString().equals(""))

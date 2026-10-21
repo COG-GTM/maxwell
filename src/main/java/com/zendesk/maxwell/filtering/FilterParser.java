@@ -13,6 +13,7 @@ import java.util.regex.Pattern;
 import static java.io.StreamTokenizer.*;
 
 public class FilterParser {
+	static final int MAX_REGEXP_LENGTH = 4096;
 	private StreamTokenizer tokenizer;
 	private InputStreamReader inputStream;
 	private final String input;
@@ -144,16 +145,20 @@ public class FilterParser {
 	}
 
 	private String parseRegexp() throws IOException {
-		char ch, lastChar = 0;
-		String s = "";
+		StringBuilder sb = new StringBuilder();
+		int lastChar = 0;
 		while ( true ) {
-			ch = (char) inputStream.read();
+			int ch = inputStream.read();
+			if ( ch == -1 )
+				throw new IOException("unterminated regexp: /" + sb);
 			if ( ch == '/' && lastChar != '\\' )
 				break;
+			if ( sb.length() >= MAX_REGEXP_LENGTH )
+				throw new IOException("regexp exceeds maximum length of " + MAX_REGEXP_LENGTH + " characters");
 
-			s += ch;
+			sb.append((char) ch);
 			lastChar = ch;
 		}
-		return s;
+		return sb.toString();
 	}
 }

@@ -227,7 +227,8 @@ metrics_jvm              | BOOLEAN                             | enable jvm metr
 metrics_slf4j_interval   | SECONDS                             | the frequency metrics are emitted to the log, in seconds, when slf4j reporting is configured | 60
 http_port                | INT                                 | the port the server will bind to when http reporting is configured | 8080
 http_path_prefix         | STRING                              | http path prefix for the server | /
-http_bind_address        | STRING                              | the address the server will bind to when http reporting is configured | all addresses
+http_bind_address        | STRING                              | the address the server will bind to when http reporting is configured | all addresses; 127.0.0.1 when `http_config` or `http_diagnostic` is enabled
+http_auth_token          | STRING                              | shared secret required as `Authorization: Bearer <token>` on `/config` and `/diagnostic`. Mandatory when `http_config` or `http_diagnostic` is enabled |
 http_diagnostic          | BOOLEAN                             | enable http diagnostic endpoint | false
 http_diagnostic_timeout  | MILLISECONDS                        | the http diagnostic response timeout| 10000
 metrics_datadog_type     | [udp &#124; http] | when metrics_type includes `datadog` this is the way metrics will be reported, can only be one of [udp &#124; http] | udp
@@ -307,7 +308,10 @@ this would be equivalent to passing `--user=auser`.
 
 ## via PATCH: /config
 If `http_config` is set to true in config.properties or in the environment,
-the endpoint /config will be exposed. Currently only filter updates are supported,
+the endpoint /config will be exposed. `http_auth_token` must also be set, and every
+request must send it as `Authorization: Bearer <token>`. Unless `http_bind_address`
+is set, the server only listens on 127.0.0.1 when `/config` or `/diagnostic` is enabled.
+Currently only filter updates are supported,
 and a filter can be updated with a request in the following format
 
 `PATCH: /config`
