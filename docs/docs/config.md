@@ -259,6 +259,18 @@ LOG_LEVEL: [ debug &#124; info &#124; warn &#124; error ]
 <p id="sslopt" class="jumptarget">
 SSL_OPTION: [ DISABLED &#124; PREFERRED &#124; REQUIRED &#124; VERIFY_CA &#124; VERIFY_IDENTITY ]
 </p>
+<p>
+The SSL option is passed to MySQL Connector/J unchanged as its <code>sslMode</code> property (maxwell and maxwell-bootstrap).
+<code>VERIFY_CA</code> checks the server certificate against a trusted CA and <code>VERIFY_IDENTITY</code> also checks the hostname,
+so the server's CA must be in the JVM truststore (or in <code>trustCertificateKeyStoreUrl</code> via <code>jdbc_options</code>).
+If <code>jdbc_options</code> also sets <code>sslMode</code>, the stricter of the two is used.
+</p>
+<p id="caching_sha2" class="jumptarget">
+Maxwell no longer sets <code>allowPublicKeyRetrieval=true</code>, and ignores it in <code>jdbc_options</code> unless SSL is
+REQUIRED, VERIFY_CA or VERIFY_IDENTITY: without TLS, a man-in-the-middle can answer the key request with its own RSA key and
+recover the password. To use MySQL 8's <code>caching_sha2_password</code> without TLS, pin the server's key with
+<code>jdbc_options=serverRSAPublicKeyFile=/path/to/public_key.pem</code>.
+</p>
 <p id="producer_type" class="jumptarget">
 PRODUCER_TYPE: [ stdout &#124; file &#124; kafka &#124; kinesis &#124; pubsub &#124; sqs &#124; rabbitmq &#124; redis ]
 </p>

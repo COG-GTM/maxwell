@@ -1,18 +1,34 @@
 package com.zendesk.maxwell;
 
 import java.net.URISyntaxException;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
 import com.github.shyiko.mysql.binlog.network.SSLMode;
 
 import org.apache.http.client.utils.URIBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Configuration object describing a mysql connection
  */
 public class MaxwellMysqlConfig {
+	private static final Logger LOGGER = LoggerFactory.getLogger(MaxwellMysqlConfig.class);
+
+	public static final String JDBC_SSL_MODE = "sslMode";
+	public static final String JDBC_ALLOW_PUBLIC_KEY_RETRIEVAL = "allowPublicKeyRetrieval";
+
+	// pre-8.0.13 Connector/J flags superseded by sslMode
+	private static final List<String> LEGACY_JDBC_SSL_OPTIONS = Arrays.asList("useSSL", "requireSSL", "verifyServerCertificate");
+
+	private static final List<SSLMode> SSL_MODES_BY_STRENGTH = Arrays.asList(
+		SSLMode.DISABLED, SSLMode.PREFERRED, SSLMode.REQUIRED, SSLMode.VERIFY_CA, SSLMode.VERIFY_IDENTITY
+	);
 
 	public String host;
 	public Integer port;
@@ -48,7 +64,6 @@ public class MaxwellMysqlConfig {
 		this.jdbcOptions = new HashMap<>();
 		this.jdbcOptions.put("zeroDateTimeBehavior", "convertToNull");
 		this.jdbcOptions.put("connectTimeout", String.valueOf(connectTimeoutMS));
-		this.jdbcOptions.put("allowPublicKeyRetrieval", "true");
 	}
 
 	/**
@@ -87,18 +102,6 @@ public class MaxwellMysqlConfig {
 		this.sslMode = c.sslMode;
 	}
 
-	private void useSSL(boolean should) {
-		this.jdbcOptions.put("useSSL", String.valueOf(should));
-	}
-
-	private void requireSSL(boolean should) {
-		this.jdbcOptions.put("requireSSL", String.valueOf(should));
-	}
-
-	private void verifyServerCertificate(boolean should) {
-		this.jdbcOptions.put("verifyServerCertificate", String.valueOf(should));
-	}
-
 	/**
 	 * Parse JDBC options from a key=val&amp;key2=val2 string
 	 * @param opts string to parse
@@ -115,21 +118,56 @@ public class MaxwellMysqlConfig {
 		}
 	}
 
-	private void setSSLOptions() {
-		if (sslMode != null && sslMode != SSLMode.DISABLED) {
-			this.useSSL(true); // for all SSL modes other than DISABLED, use SSL
+	/**
+	 * JDBC driver options for a connection: jdbcOptions plus Connector/J's {@code sslMode},
+	 * mapped one-to-one from {@link #sslMode}.  jdbcOptions itself is not modified.
+	 *
+	 * If jdbcOptions also sets {@code sslMode}, the stricter of the two modes wins.
+	 * {@code allowPublicKeyRetrieval=true} is only passed through when the connection is
+	 * guaranteed to use TLS; otherwise an on-path attacker could answer the driver's
+	 * public key request with their own RSA key and recover the password.
+	 *
+	 * @return a new map of JDBC options
+	 */
+	public Map<String, String> getJDBCConnectionOptions() {
+		Map<String, String> options = new LinkedHashMap<>(jdbcOptions);
 
-			this.verifyServerCertificate(false); // default to not verify server cert
-			this.requireSSL(false); // default to not require SSL
-
-			this.requireSSL(sslMode == SSLMode.REQUIRED || sslMode == SSLMode.VERIFY_CA
-					|| sslMode == SSLMode.VERIFY_IDENTITY);
-
-			this.verifyServerCertificate(sslMode == SSLMode.VERIFY_IDENTITY);
+		SSLMode effective = effectiveSSLMode(options.get(JDBC_SSL_MODE));
+		if ( effective != null ) {
+			LEGACY_JDBC_SSL_OPTIONS.forEach(options::remove);
+			options.put(JDBC_SSL_MODE, effective.name());
 		}
-		else {
-			this.useSSL(false);
+
+		if ( "true".equalsIgnoreCase(options.get(JDBC_ALLOW_PUBLIC_KEY_RETRIEVAL)) && !requiresTLS(effective) ) {
+			LOGGER.warn("ignoring allowPublicKeyRetrieval=true for mysql {}:{}: it requires ssl=REQUIRED|VERIFY_CA|VERIFY_IDENTITY. "
+				+ "Use serverRSAPublicKeyFile to authenticate with caching_sha2_password without TLS.", host, port);
+			options.put(JDBC_ALLOW_PUBLIC_KEY_RETRIEVAL, "false");
 		}
+
+		return options;
+	}
+
+	private SSLMode effectiveSSLMode(String jdbcSSLMode) {
+		SSLMode fromJdbc = parseSSLMode(jdbcSSLMode);
+		if ( sslMode == null )
+			return fromJdbc;
+		if ( fromJdbc == null )
+			return sslMode;
+		return SSL_MODES_BY_STRENGTH.indexOf(fromJdbc) > SSL_MODES_BY_STRENGTH.indexOf(sslMode) ? fromJdbc : sslMode;
+	}
+
+	private static SSLMode parseSSLMode(String mode) {
+		if ( mode == null )
+			return null;
+		for ( SSLMode m : SSLMode.values() ) {
+			if ( m.name().equalsIgnoreCase(mode.trim()) )
+				return m;
+		}
+		return null;
+	}
+
+	private static boolean requiresTLS(SSLMode mode) {
+		return mode == SSLMode.REQUIRED || mode == SSLMode.VERIFY_CA || mode == SSLMode.VERIFY_IDENTITY;
 	}
 
 	/**
@@ -139,8 +177,6 @@ public class MaxwellMysqlConfig {
 	 * @throws URISyntaxException if we have problems building the URI
 	 */
 	public String getConnectionURI(boolean includeDatabase) throws URISyntaxException {
-		this.setSSLOptions();
-
 		URIBuilder uriBuilder = new URIBuilder();
 
 		uriBuilder.setScheme("jdbc:mysql");
@@ -151,7 +187,7 @@ public class MaxwellMysqlConfig {
 			uriBuilder.setPath("/" + database);
 		}
 
-		for (Map.Entry<String, String> jdbcOption : jdbcOptions.entrySet()) {
+		for (Map.Entry<String, String> jdbcOption : getJDBCConnectionOptions().entrySet()) {
 			uriBuilder.addParameter(jdbcOption.getKey(), jdbcOption.getValue());
 		}
 
