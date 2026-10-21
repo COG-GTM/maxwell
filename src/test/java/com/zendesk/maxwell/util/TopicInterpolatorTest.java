@@ -6,7 +6,11 @@ import com.zendesk.maxwell.row.RowIdentity;
 import com.zendesk.maxwell.row.RowMap;
 import org.junit.Test;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.IsEqual.equalTo;
@@ -236,6 +240,54 @@ public class TopicInterpolatorTest {
 
 	private RowIdentity newRowIdentity() {
 		return new RowIdentity("testDb", "testTable", "insert", null);
+	}
+
+
+	@Test
+	public void cleanUpTemplateWithWhitespaceOnlySeparatorIsRejectedUpFront() {
+		TopicInterpolator escaped = new TopicInterpolator("%{database} %{table}", true);
+		assertThrows(IllegalArgumentException.class, escaped::validateForCleanUp);
+
+		new TopicInterpolator("%{database} %{table}", false).validateForCleanUp();
+		new TopicInterpolator("%{database}.%{table}", true).validateForCleanUp();
+	}
+
+	@Test
+	public void escapedInterpolationIsInjective() {
+		String[] templates = {
+			"namespace_%{database}_%{table}", "ns%{database}_%{table}", "a_%{database}.%{table}",
+			"x-%{database}", "%{database}_x%{table}", "%{database}.%{table}.%{type}", "p:%{database}:%{table}"
+		};
+		char[] alphabet = {'a', '_', '.', '-', ':', '%', '5', 'F'};
+		List<String> values = new ArrayList<>();
+		values.add("");
+		for (int len = 1; len <= 2; len++) {
+			int combos = (int) Math.pow(alphabet.length, len);
+			for (int n = 0; n < combos; n++) {
+				StringBuilder sb = new StringBuilder();
+				for (int i = 0, k = n; i < len; i++, k /= alphabet.length)
+					sb.append(alphabet[k % alphabet.length]);
+				values.add(sb.toString());
+			}
+		}
+
+		for (String template : templates) {
+			TopicInterpolator interpolator = new TopicInterpolator(template, true).validateForCleanUp();
+			for (boolean cleanUp : new boolean[] {false, true}) {
+				Map<String, String> seen = new HashMap<>();
+				for (String db : values) {
+					for (String table : values) {
+						String type = template.contains("%{type}") ? table + db : null;
+						String out = interpolator.interpolate(db, table, type, cleanUp);
+						String identity = (template.contains("%{database}") ? db : "") + "\u0000"
+							+ (template.contains("%{table}") ? table : "") + "\u0000" + type;
+						String previous = seen.put(out, identity);
+						if (previous != null && !previous.equals(identity))
+							throw new AssertionError(template + " (cleanUp=" + cleanUp + ") maps both " + previous + " and " + identity + " to " + out);
+					}
+				}
+			}
+		}
 	}
 
 	private RowMap newRowMap() {

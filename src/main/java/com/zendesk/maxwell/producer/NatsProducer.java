@@ -27,7 +27,7 @@ public class NatsProducer extends AbstractProducer {
 		urls.forEach(optionBuilder::server);
 		Options option = optionBuilder.build();
 
-		this.natsSubjectInterpolator = new TopicInterpolator(context.getConfig().natsSubject, context.getConfig().topicEscapeIdentifiers);
+		this.natsSubjectInterpolator = new TopicInterpolator(context.getConfig().natsSubject, context.getConfig().topicEscapeIdentifiers).validateForCleanUp();
 
 		try {
 			this.natsConnection = Nats.connect(option);

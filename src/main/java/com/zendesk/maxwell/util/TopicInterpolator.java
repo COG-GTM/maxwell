@@ -71,6 +71,19 @@ public class TopicInterpolator {
 	}
 
 	/**
+	 * Fail fast if this template is used with {@link #generateFromRowMapAndCleanUpIllegalCharacters}
+	 * and escaping is enabled but the whitespace-stripped template is ambiguous.
+	 *
+	 * @return this
+	 * @throws IllegalArgumentException if the cleaned-up template cannot be made unambiguous
+	 */
+	public TopicInterpolator validateForCleanUp() {
+		if (this.isInterpolated && this.escapeIdentifiers)
+			this.cleanTemplate.validate();
+		return this;
+	}
+
+	/**
 	 * Interpolate the input string based on {{{@link RowIdentity}}}
 	 * <p>
 	 * If your inputString contains a %{type} it will not be interpolated because we can't get type from RowIdentity.
