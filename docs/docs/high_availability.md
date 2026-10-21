@@ -26,15 +26,21 @@ authentication by default, so the example config locks the cluster down:
   peers instead of UDP multicast.
 - **SYM_ENCRYPT**: all cluster traffic is encrypted with a shared AES key.  A node
   without the key can't read or inject messages.
-- **AUTH**: a JOIN must present a shared secret.
+- **AUTH** (`X509Token`): a JOIN must present a shared secret, encrypted with an
+  RSA key pair that only cluster members hold.
 
 On top of that, put the HA nodes on an isolated network segment or firewall the
 TCP port so only the other HA nodes can reach it.
 
-Generate one key and copy the keystore to every node over a secure channel:
+Generate one keystore holding an AES key (encryption) and an RSA key pair
+(AUTH), and copy it to every node over a secure channel.  Use the same password
+for the keystore and both keys:
 
 ```bash
 keytool -genseckey -alias maxwell-ha -keyalg AES -keysize 256 \
+        -storetype PKCS12 -keystore raft.keystore
+keytool -genkeypair -alias maxwell-ha-auth -keyalg RSA -keysize 3072 \
+        -dname "CN=maxwell-ha" -validity 3650 \
         -storetype PKCS12 -keystore raft.keystore
 chmod 600 raft.keystore
 ```
@@ -47,10 +53,11 @@ property                            | default                                   
 `jgroups.bind_addr`                 | `127.0.0.1`                                         | address this node listens on
 `jgroups.bind_port`                 | `7800`                                              | TCP port this node listens on
 `jgroups.tcpping.initial_hosts`     | `127.0.0.1[7800],127.0.0.1[7801],127.0.0.1[7802]`   | every HA node, as `host[port]`
-`jgroups.encrypt.keystore`          | `raft.keystore`                                     | path to the keystore holding the shared AES key
+`jgroups.encrypt.keystore`          | `raft.keystore`                                     | path to the keystore holding the AES key and RSA key pair
 `jgroups.encrypt.keystore_type`     | `PKCS12`                                            | keystore type
 `jgroups.encrypt.keystore_password` | *(required)*                                        | keystore (and key) password
 `jgroups.encrypt.alias`             | `maxwell-ha`                                        | alias of the AES key
+`jgroups.auth.alias`                | `maxwell-ha-auth`                                   | alias of the RSA key pair used by AUTH
 `jgroups.auth.secret`               | *(required)*                                        | shared secret every node presents on JOIN
 
 The keystore password and auth secret have no defaults.  A node started without
@@ -71,6 +78,10 @@ host2: $ JAVA_OPTS="$JAVA_OPTS -Djgroups.bind_addr=10.0.0.2" bin/maxwell --ha --
 host3: $ JAVA_OPTS="$JAVA_OPTS -Djgroups.bind_addr=10.0.0.3" bin/maxwell --ha --raft_member_id=C
 ```
 
+To try it out with all three nodes on one machine, keep the default loopback
+peer list and give each node its own port instead of its own address:
+`-Djgroups.bind_port=7800`, `7801` and `7802`.
+
 if all goes well, the 3 nodes will connect over TCP, elect one to be the
 cluster leader, and away you will go.  If one node is terminated or
 partitioned, a new election will be held to replace it.
@@ -84,8 +95,7 @@ to each other.
 
 More advanced (especially inter-DC) configurations may be implemented by
 editing `raft.xml`; you may need to tunnel through a firewall or two, or swap
-SYM_ENCRYPT for ASYM_ENCRYPT and AUTH's shared secret for an `X509Token`, good
-stuff like that.  It's of course out of scope for this document, so
+SYM_ENCRYPT for ASYM_ENCRYPT, good stuff like that.  It's of course out of scope for this document, so
 [check out the jgroups
 documentation](http://www.jgroups.org/manual5/index.html), but if
 you come up with something good drop me a line.

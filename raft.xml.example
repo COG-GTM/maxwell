@@ -8,12 +8,15 @@
 
     * uses TCP with a static TCPPING member list (no UDP multicast discovery),
     * encrypts all cluster messages with a shared AES key (SYM_ENCRYPT), and
-    * requires a shared secret on JOIN (AUTH).
+    * requires a shared secret on JOIN, encrypted with an RSA key pair from the
+      same keystore (AUTH + X509Token).
 
   Values are read from JVM system properties (e.g. JAVA_OPTS="-Djgroups.bind_addr=...")
   or environment variables of the same name.  The keystore password and auth
   secret have no defaults: a node without them fails to start instead of joining
-  insecurely.  Keep the HA cluster on an isolated network segment as well.
+  insecurely.  Nodes on the same host need distinct jgroups.bind_port values
+  (7800, 7801, 7802 with the default peer list).  Keep the HA cluster on an
+  isolated network segment as well.
 -->
 <config xmlns="urn:org:jgroups"
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -37,9 +40,14 @@
     <UNICAST3 xmit_interval="500"/>
     <pbcast.STABLE desired_avg_gossip="50000" max_bytes="4M"/>
     <raft.NO_DUPES/>
-    <AUTH auth_class="org.jgroups.auth.MD5Token"
+    <AUTH auth_class="org.jgroups.auth.X509Token"
           auth_value="${jgroups.auth.secret}"
-          token_hash="SHA"/>
+          keystore_type="${jgroups.encrypt.keystore_type:PKCS12}"
+          keystore_path="${jgroups.encrypt.keystore:raft.keystore}"
+          keystore_password="${jgroups.encrypt.keystore_password}"
+          cert_alias="${jgroups.auth.alias:maxwell-ha-auth}"
+          cert_password="${jgroups.encrypt.keystore_password}"
+          cipher_type="RSA"/>
     <pbcast.GMS print_local_addr="true" join_timeout="2000"/>
     <UFC max_credits="2M" min_threshold="0.4"/>
     <MFC max_credits="2M" min_threshold="0.4"/>

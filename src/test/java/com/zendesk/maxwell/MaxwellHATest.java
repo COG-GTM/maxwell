@@ -14,14 +14,13 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
-import javax.crypto.KeyGenerator;
 import java.io.ByteArrayInputStream;
 import java.io.File;
-import java.io.FileOutputStream;
 import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
-import java.security.KeyStore;
+import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
 
@@ -168,17 +167,24 @@ public class MaxwellHATest {
 	}
 
 	private File writeKeystore(String name) throws Exception {
-		KeyGenerator gen = KeyGenerator.getInstance("AES");
-		gen.init(256);
-		KeyStore ks = KeyStore.getInstance("PKCS12");
-		ks.load(null, null);
-		ks.setEntry("maxwell-ha", new KeyStore.SecretKeyEntry(gen.generateKey()),
-			new KeyStore.PasswordProtection(PASSWORD.toCharArray()));
-		File f = tmp.newFile(name);
-		try ( FileOutputStream out = new FileOutputStream(f) ) {
-			ks.store(out, PASSWORD.toCharArray());
-		}
+		File f = new File(tmp.getRoot(), name);
+		keytool("-genseckey", "-alias", "maxwell-ha", "-keyalg", "AES", "-keysize", "256",
+			"-storetype", "PKCS12", "-keystore", f.getAbsolutePath(),
+			"-storepass", PASSWORD, "-keypass", PASSWORD);
+		keytool("-genkeypair", "-alias", "maxwell-ha-auth", "-keyalg", "RSA", "-keysize", "2048",
+			"-dname", "CN=maxwell-ha", "-validity", "1",
+			"-storetype", "PKCS12", "-keystore", f.getAbsolutePath(),
+			"-storepass", PASSWORD, "-keypass", PASSWORD);
 		return f;
+	}
+
+	private static void keytool(String... args) throws Exception {
+		List<String> cmd = new ArrayList<>();
+		cmd.add(Paths.get(System.getProperty("java.home"), "bin", "keytool").toString());
+		cmd.addAll(Arrays.asList(args));
+		Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
+		String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+		assertEquals("keytool failed: " + out, 0, p.waitFor());
 	}
 
 	private static int freePort() throws Exception {
