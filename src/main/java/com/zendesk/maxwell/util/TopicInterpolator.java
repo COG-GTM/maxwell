@@ -3,6 +3,8 @@ package com.zendesk.maxwell.util;
 import com.zendesk.maxwell.row.RowIdentity;
 import com.zendesk.maxwell.row.RowMap;
 
+import java.util.function.UnaryOperator;
+
 /**
  * An utility class to interpolate subscription, channel templates.
  * <p>
@@ -71,27 +73,57 @@ public class TopicInterpolator {
 			return this.inputString;
 	}
 
+	/**
+	 * Interpolate a kafka topic name based on {{{@link RowMap}}}.  Characters in the substituted
+	 * values that kafka does not allow in topic names are replaced with '_'.
+	 *
+	 * @param r the rowMap
+	 * @return the interpolated topic name
+	 */
+	public String generateKafkaTopicFromRowMap(RowMap r) {
+		if (this.isInterpolated)
+			return interpolate(r.getDatabase(), r.getTable(), r.getRowType(), TopicInterpolator::cleanupIllegalKafkaTopicCharacters);
+		else
+			return this.inputString;
+	}
+
+	/**
+	 * Interpolate a kafka topic name based on {{{@link RowIdentity}}}.  Characters in the substituted
+	 * values that kafka does not allow in topic names are replaced with '_'.
+	 *
+	 * @param pk the rowIdentity
+	 * @return the interpolated topic name
+	 */
+	public String generateKafkaTopicFromRowIdentity(RowIdentity pk) {
+		if (this.isInterpolated)
+			return interpolate(pk.getDatabase(), pk.getTable(), null, TopicInterpolator::cleanupIllegalKafkaTopicCharacters);
+		else
+			return this.inputString;
+	}
+
 	protected String interpolate(final String database, final String table, final String type, final Boolean cleanUpIllegalCharacters) {
+		if (cleanUpIllegalCharacters)
+			return interpolate(database, table, type, TopicInterpolator::cleanupIllegalCharacters);
+		else
+			return interpolate(database, table, type, UnaryOperator.identity());
+	}
+
+	/*
+	 * Substitutions use String.replace, which is literal: database and table names may legally contain
+	 * '$' and '\', which String.replaceAll would interpret as regex replacement metacharacters.
+	 */
+	private String interpolate(final String database, final String table, final String type, final UnaryOperator<String> cleanup) {
 		if (this.isInterpolated) {
-			final String typeReplacement = type != null ? type : "";
-
-			if (cleanUpIllegalCharacters)
-				return this.inputString
-						.replaceAll("%\\{database\\}", cleanupIllegalCharacters(emptyStringOnNull(database)))
-						.replaceAll("%\\{table\\}", cleanupIllegalCharacters(emptyStringOnNull(table)))
-						.replaceAll("%\\{type\\}", cleanupIllegalCharacters(emptyStringOnNull(typeReplacement)));
-			else
-				return this.inputString
-						.replaceAll("%\\{database\\}", emptyStringOnNull(database))
-						.replaceAll("%\\{table\\}", emptyStringOnNull(table))
-						.replaceAll("%\\{type\\}", emptyStringOnNull(typeReplacement));
-
+			return this.inputString
+					.replace("%{database}", cleanup.apply(emptyStringOnNull(database)))
+					.replace("%{table}", cleanup.apply(emptyStringOnNull(table)))
+					.replace("%{type}", cleanup.apply(emptyStringOnNull(type)));
 		} else {
 			return this.inputString;
 		}
 	}
 
-	private String emptyStringOnNull(final String value) {
+	private static String emptyStringOnNull(final String value) {
 		if (value == null) {
 			return "";
 		} else {
@@ -99,7 +131,11 @@ public class TopicInterpolator {
 		}
 	}
 
-	private String cleanupIllegalCharacters(final String value) {
+	private static String cleanupIllegalCharacters(final String value) {
 		return value.replaceAll("([^A-Za-z0-9])", "_");
+	}
+
+	private static String cleanupIllegalKafkaTopicCharacters(final String value) {
+		return value.replaceAll("[^A-Za-z0-9._-]", "_");
 	}
 }

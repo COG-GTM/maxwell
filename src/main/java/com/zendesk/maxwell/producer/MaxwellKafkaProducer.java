@@ -15,6 +15,7 @@ import com.zendesk.maxwell.util.StoppableTaskState;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.kafka.clients.producer.*;
 import org.apache.kafka.common.KafkaException;
+import org.apache.kafka.common.errors.InvalidTopicException;
 import org.apache.kafka.common.errors.RecordTooLargeException;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.slf4j.Logger;
@@ -137,6 +138,7 @@ public class MaxwellKafkaProducer extends AbstractProducer {
 
 class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnable, StoppableTask {
 	static final Logger LOGGER = LoggerFactory.getLogger(MaxwellKafkaProducer.class);
+	static final int MAX_TOPIC_LENGTH = 249;
 
 	private final Producer<String, String> kafka;
 	private final String topic;
@@ -226,6 +228,9 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 	}
 
 	private Integer getNumPartitions(String topic) {
+		if (topic.length() > MAX_TOPIC_LENGTH)
+			throw new InvalidTopicException("Topic '" + topic + "' is longer than " + MAX_TOPIC_LENGTH + " characters");
+
 		try {
 			return this.kafka.partitionsFor(topic).size(); //returns 1 for new topics
 		} catch (KafkaException e) {
@@ -236,16 +241,26 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 
 	@Override
 	public void sendAsync(RowMap r, AbstractAsyncProducer.CallbackCompleter cc) throws Exception {
-		ProducerRecord<String, String> record = makeProducerRecord(r);
+		ProducerRecord<String, String> record;
+		try {
+			record = makeProducerRecord(r);
+		} catch (InvalidTopicException e) {
+			// a table/database name can produce a topic kafka refuses; handle it like a failed send
+			// (dead letter topic / ignore_producer_error) instead of crashing on every replay of the row
+			makeCallback(r, cc, null).onCompletion(null, e);
+			return;
+		}
 
 		/* if debug logging isn't enabled, release the reference to `value`, which can ease memory pressure somewhat */
 		String value = KafkaCallback.LOGGER.isDebugEnabled() ? record.value() : null;
 
-		KafkaCallback callback = new KafkaCallback(cc, r.getNextPosition(), r.getRowIdentity(), value,
+		sendAsync(record, makeCallback(r, cc, value));
+	}
+
+	private KafkaCallback makeCallback(RowMap r, AbstractAsyncProducer.CallbackCompleter cc, String value) {
+		return new KafkaCallback(cc, r.getNextPosition(), r.getRowIdentity(), value,
 				this.succeededMessageCount, this.failedMessageCount, this.succeededMessageMeter, this.failedMessageMeter,
 				this.topic, this.deadLetterTopic, this.context, this);
-
-		sendAsync(record, callback);
 	}
 
 	public void enqueueFallbackRow(String topic, RowIdentity fallbackRecord, KafkaCallback callback, RecordMetadata md, Exception reason) {
@@ -276,7 +291,7 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 			// javascript topic override
 			topic = r.getKafkaTopic();
 			if (topic == null) {
-				topic = this.topicInterpolator.generateFromRowMap(r);
+				topic = this.topicInterpolator.generateKafkaTopicFromRowMap(r);
 			}
 			LOGGER.debug("context.getConfig().producerPartitionKey = {}",  context.getConfig().producerPartitionKey);
 
@@ -288,7 +303,7 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 	ProducerRecord<String, String> makeFallbackRecord(String fallbackTopic, final RowIdentity pk, Exception reason) throws Exception {
 		String key = pk.toKeyJson(keyFormat);
 		String value = pk.toFallbackValueWithReason(reason.getClass().getSimpleName());
-		String topic = new TopicInterpolator(fallbackTopic).generateFromRowIdentity(pk) ;
+		String topic = new TopicInterpolator(fallbackTopic).generateKafkaTopicFromRowIdentity(pk);
 		return new ProducerRecord<>(topic, key, value);
 	}
 

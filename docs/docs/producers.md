@@ -358,4 +358,12 @@ Topic substituion is available in the following producers:
 - Redis, for channels
 - Nats, for subject heirarchies
 
+Substituted values are inserted literally.  For Kafka topics, characters in the
+substituted database/table names that Kafka does not allow in topic names
+(anything other than `A-Z a-z 0-9 . _ -`) are replaced with `_`.  Nats subjects
+and Pub/Sub ordering keys replace every non-alphanumeric character with `_`.
+If a row still maps to a topic Kafka rejects (e.g. longer than 249 characters),
+it is handled like any other failed send: routed to `dead_letter_topic` or
+skipped when `ignore_producer_error` is true, otherwise Maxwell stops.
+
 

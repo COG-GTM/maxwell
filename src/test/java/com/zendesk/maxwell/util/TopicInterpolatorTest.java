@@ -143,6 +143,35 @@ public class TopicInterpolatorTest {
 		assertThat(topicInterpolator.interpolate("&test Db.db!", "&test Table.table!", "&insert t.table!", false), equalTo("&test Db.db!.&test Table.table!.&insert t.table!"));
 	}
 
+	@Test
+	public void interpolatesRegexReplacementMetacharactersLiterally() {
+		TopicInterpolator dbTable = new TopicInterpolator(DATABASE_TABLE_TYPE_TEMPLATE);
+
+		assertThat(dbTable.generateFromRowMap(rowMap("d$b", "t$x")), equalTo("d$b.t$x.insert"));
+		assertThat(dbTable.generateFromRowMap(rowMap("db", "a$1")), equalTo("db.a$1.insert"));
+		assertThat(dbTable.generateFromRowMap(rowMap("db", "t\\")), equalTo("db.t\\.insert"));
+		assertThat(dbTable.generateFromRowMap(rowMap("db", "${x}\\$0")), equalTo("db.${x}\\$0.insert"));
+		assertThat(dbTable.generateFromRowIdentity(new RowIdentity("db", "t$x", null, null)), equalTo("db.t$x."));
+		assertThat(dbTable.generateFromRowMapAndCleanUpIllegalCharacters(rowMap("db", "t$x\\")), equalTo("db.t_x_.insert"));
+	}
+
+	@Test
+	public void generateKafkaTopicReplacesCharactersKafkaDisallows() {
+		TopicInterpolator topic = new TopicInterpolator("namespace_%{database}_%{table}");
+
+		assertThat(topic.generateKafkaTopicFromRowMap(rowMap("test-Db.1", "my_table")), equalTo("namespace_test-Db.1_my_table"));
+		assertThat(topic.generateKafkaTopicFromRowMap(rowMap("db", "t$x")), equalTo("namespace_db_t_x"));
+		assertThat(topic.generateKafkaTopicFromRowMap(rowMap("db", "caf\u00e9 \\")), equalTo("namespace_db_caf___"));
+		assertThat(topic.generateKafkaTopicFromRowIdentity(new RowIdentity("d$b", "t\\", null, null)), equalTo("namespace_d_b_t_"));
+
+		TopicInterpolator plain = new TopicInterpolator("maxwell");
+		assertThat(plain.generateKafkaTopicFromRowMap(rowMap("db", "t$x")), equalTo("maxwell"));
+	}
+
+	private RowMap rowMap(String database, String table) {
+		return new RowMap("insert", database, table, System.currentTimeMillis(), Collections.emptyList(), new Position(new BinlogPosition(3, "mysql.1"), 0L));
+	}
+
 	private RowIdentity newRowIdentity() {
 		return new RowIdentity("testDb", "testTable", "insert", null);
 	}
