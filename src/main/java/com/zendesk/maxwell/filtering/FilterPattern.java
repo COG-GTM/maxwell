@@ -42,11 +42,12 @@ public class FilterPattern {
 
 	protected String patternToString(Pattern p) {
 		String s = p.pattern();
+		String literal;
 
 		if ( s.equals("") ) {
 			return "*";
-		} else if ( s.startsWith("^") && s.endsWith("$") ) {
-			return s.substring(1, s.length() - 1);
+		} else if ( (literal = FilterParser.literalValue(p)) != null ) {
+			return FilterParser.quoteIdentifier(literal);
 		} else {
 			return "/" + s + "/";
 		}

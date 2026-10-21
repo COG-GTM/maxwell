@@ -24,7 +24,9 @@ public class FilterColumnPattern extends FilterPattern {
 		super(type, dbPattern, tablePattern);
 		this.columnName = columnName;
 		this.columnPattern = columnPattern;
-		this.columnPatternIsNull = "^null$".equals(columnPattern.toString().toLowerCase());
+		String literalValue = FilterParser.literalValue(columnPattern);
+		this.columnPatternIsNull = "null".equalsIgnoreCase(literalValue)
+			|| "^null$".equalsIgnoreCase(columnPattern.pattern());
 	}
 
 	@Override

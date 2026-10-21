@@ -21,6 +21,18 @@ suppress everything except updates in the `db1` database.
 --filter = 'exclude: *.*, include: db1.*'
 ```
 
+## Quoted names
+
+Bare and quoted names (`` `name` ``, `'name'`, `"name"`) always match the database, table or
+column value exactly; only `/.../` is treated as a regular expression. Quote names that contain
+characters other than letters, digits and `_`:
+
+```
+--filter = 'exclude: shop.`orders$archive`, include: db./pii\..*/'
+```
+
+Here `` `orders$archive` `` excludes only the table literally named `orders$archive`, and `/pii\..*/`
+includes tables matching that regexp. An invalid regexp is rejected at startup.
 
 # Column Filters
 ***
