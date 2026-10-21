@@ -272,7 +272,8 @@ makes the driver encrypt the password with whatever RSA key the server sends bac
 the password. Use <code>ssl=REQUIRED</code> (or VERIFY_CA / VERIFY_IDENTITY), or pin the server key with
 <code>jdbc_options=serverRSAPublicKeyFile=/path/to/public_key.pem</code>. Only add
 <code>allowPublicKeyRetrieval=true</code> to <code>jdbc_options</code> on a trusted network; Maxwell logs a warning
-if it is set without required SSL.
+if it is set without required SSL. <code>maxwell-bootstrap</code> does not apply the <code>ssl</code> setting to its
+own connections, so it warns whenever the option is set.
 </p>
 <p id="partition_by" class="jumptarget">
 PARTITION_BY: [ database &#124; table &#124; primary_key &#124; transaction_id &#124; column &#124; random ]

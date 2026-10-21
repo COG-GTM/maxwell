@@ -115,13 +115,20 @@ public class MaxwellMysqlConfig {
 	}
 
 	/**
+	 * @return true if {@code allowPublicKeyRetrieval=true} is set in jdbc_options
+	 */
+	public boolean isPublicKeyRetrievalEnabled() {
+		return "true".equalsIgnoreCase(jdbcOptions.get("allowPublicKeyRetrieval"));
+	}
+
+	/**
 	 * Whether the user opted into {@code allowPublicKeyRetrieval=true} on a connection that
 	 * isn't guaranteed to use TLS.  In that case an on-path attacker can answer the driver's
 	 * public key request with their own RSA key and recover the plaintext password.
 	 * @return true if public key retrieval is enabled without required SSL
 	 */
 	public boolean hasInsecurePublicKeyRetrieval() {
-		boolean retrievalEnabled = "true".equalsIgnoreCase(jdbcOptions.get("allowPublicKeyRetrieval"));
+		boolean retrievalEnabled = isPublicKeyRetrievalEnabled();
 		boolean sslRequired = sslMode == SSLMode.REQUIRED || sslMode == SSLMode.VERIFY_CA
 				|| sslMode == SSLMode.VERIFY_IDENTITY;
 		return retrievalEnabled && !sslRequired;

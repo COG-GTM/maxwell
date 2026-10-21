@@ -53,6 +53,14 @@ public class MaxwellBootstrapUtilityConfig extends AbstractConfig {
 		}
 	}
 
+	// the bootstrap connection URIs don't apply the ssl option, so TLS can't be assumed here
+	private void warnOnPublicKeyRetrieval(String prefix, MaxwellMysqlConfig config) {
+		if ( config.isPublicKeyRetrievalEnabled() ) {
+			LOGGER.warn("{}jdbc_options sets allowPublicKeyRetrieval=true, but maxwell-bootstrap does not apply {}ssl; "
+				+ "a man-in-the-middle can recover the mysql password. Prefer serverRSAPublicKeyFile.", prefix, prefix);
+		}
+	}
+
 	private String getConfigConnectionURI(MaxwellMysqlConfig config) throws URISyntaxException {
 		URIBuilder uriBuilder = new URIBuilder();
 		uriBuilder.setScheme("jdbc:mysql");
@@ -168,9 +176,9 @@ public class MaxwellBootstrapUtilityConfig extends AbstractConfig {
 				replicationMysql.password = mysql.password;
 		}
 
-		warnOnInsecurePublicKeyRetrieval("", this.mysql);
+		warnOnPublicKeyRetrieval("", this.mysql);
 		if ( this.replicationMysql != this.mysql )
-			warnOnInsecurePublicKeyRetrieval("replication_", this.replicationMysql);
+			warnOnPublicKeyRetrieval("replication_", this.replicationMysql);
 
 		this.schemaDatabaseName = fetchStringOption("schema_database", options, properties, "maxwell");
 		this.clientID = fetchStringOption("client_id", options, properties, "maxwell");

@@ -136,6 +136,7 @@ public class MaxwellMysqlConfigTest {
 			MaxwellMysqlConfig config = new MaxwellMysqlConfig("localhost", 3306, "maxwell", "maxwell", "maxwell", mode, false);
 			assertThat(config.getConnectionURI(), not(containsString("allowPublicKeyRetrieval")));
 			assertThat(config.hasInsecurePublicKeyRetrieval(), is(false));
+			assertThat(config.isPublicKeyRetrievalEnabled(), is(false));
 		}
 
 		MaxwellMysqlConfig clone = new MaxwellMysqlConfig(new MaxwellMysqlConfig());
@@ -147,6 +148,7 @@ public class MaxwellMysqlConfigTest {
 		MaxwellMysqlConfig config = new MaxwellMysqlConfig("localhost", 3306, "maxwell", "maxwell", "maxwell", SSLMode.DISABLED, false);
 		config.setJDBCOptions("allowPublicKeyRetrieval=true");
 		assertThat(config.getConnectionURI(), containsString("allowPublicKeyRetrieval=true"));
+		assertThat(config.isPublicKeyRetrievalEnabled(), is(true));
 		assertThat(config.hasInsecurePublicKeyRetrieval(), is(true));
 
 		config.sslMode = SSLMode.PREFERRED;
