@@ -152,6 +152,8 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 	private String deadLetterTopic;
 	private final ConcurrentLinkedQueue<Pair<ProducerRecord<String, String>, KafkaCallback>> deadLetterQueue;
 	private final TopicInterpolator topicInterpolator;
+	private final boolean escapeTopicIdentifiers;
+	private final TopicInterpolator deadLetterTopicInterpolator;
 
 	public static MaxwellKafkaPartitioner makeDDLPartitioner(String partitionHashFunc, String partitionKey) {
 		if (partitionKey.equals("table")) {
@@ -171,7 +173,8 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 			this.topic = kafkaTopic;
 		}
 
-		this.topicInterpolator = new TopicInterpolator(this.topic);
+		this.escapeTopicIdentifiers = context.getConfig().topicEscapeIdentifiers;
+		this.topicInterpolator = new TopicInterpolator(this.topic, this.escapeTopicIdentifiers);
 		this.kafka = producer;
 
 		String hash = context.getConfig().kafkaPartitionHash;
@@ -183,6 +186,7 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 		this.ddlPartitioner = makeDDLPartitioner(hash, partitionKey);
 		this.ddlTopic = context.getConfig().ddlKafkaTopic;
 		this.deadLetterTopic = context.getConfig().deadLetterTopic;
+		this.deadLetterTopicInterpolator = this.deadLetterTopic == null ? null : new TopicInterpolator(this.deadLetterTopic, this.escapeTopicIdentifiers);
 		this.deadLetterQueue = new ConcurrentLinkedQueue<>();
 
 		if (context.getConfig().kafkaKeyFormat.equals("hash"))
@@ -305,7 +309,10 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 	ProducerRecord<String, String> makeFallbackRecord(String fallbackTopic, final RowIdentity pk, Exception reason) throws Exception {
 		String key = pk.toKeyJson(keyFormat);
 		String value = pk.toFallbackValueWithReason(reason.getClass().getSimpleName());
-		String topic = new TopicInterpolator(fallbackTopic).generateKafkaTopicFromRowIdentity(pk);
+		TopicInterpolator interpolator = this.deadLetterTopicInterpolator != null && fallbackTopic.equals(this.deadLetterTopic)
+			? this.deadLetterTopicInterpolator
+			: new TopicInterpolator(fallbackTopic, this.escapeTopicIdentifiers);
+		String topic = interpolator.generateKafkaTopicFromRowIdentity(pk);
 		return new ProducerRecord<>(topic, key, value);
 	}
 
