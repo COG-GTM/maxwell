@@ -1432,17 +1432,30 @@ public class MaxwellConfig extends AbstractConfig {
 				usageForOptions("Please specify all of: replication_host, replication_user, replication_password", "--replication");
 			}
 
+			MaxwellMysqlConfig explicitReplication = this.replicationMysql;
+			SSLMode replicationSslMode = explicitReplication.sslMode != null ? explicitReplication.sslMode : this.maxwellMysql.sslMode;
+
 			this.replicationMysql = new MaxwellMysqlConfig(
 				this.maxwellMysql.host,
 				this.maxwellMysql.port,
 				null,
 				this.maxwellMysql.user,
 				this.maxwellMysql.password,
-				this.maxwellMysql.sslMode,
+				replicationSslMode,
 				this.maxwellMysql.enableHeartbeat
 			);
 
-			this.replicationMysql.jdbcOptions = this.maxwellMysql.jdbcOptions;
+			this.replicationMysql.jdbcOptions = new HashMap<>(this.maxwellMysql.jdbcOptions);
+			Map<String, String> defaultJdbcOptions = new MaxwellMysqlConfig().jdbcOptions;
+			for ( Map.Entry<String, String> opt : explicitReplication.jdbcOptions.entrySet() ) {
+				if ( !Objects.equals(defaultJdbcOptions.get(opt.getKey()), opt.getValue()) ) {
+					this.replicationMysql.jdbcOptions.put(opt.getKey(), opt.getValue());
+				}
+			}
+
+			if ( explicitReplication.sslMode != null && explicitReplication.sslMode != this.maxwellMysql.sslMode ) {
+				LOGGER.info("replication_host not set; replicating from maxwell host with replication_ssl={}", replicationSslMode);
+			}
 		}
 
 		if (this.replicationMysql.sslMode == null) {
