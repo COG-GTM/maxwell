@@ -25,12 +25,13 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ListWithDiskBuffer<T> implements Closeable {
 	static final Logger LOGGER = LoggerFactory.getLogger(ListWithDiskBuffer.class);
 	private static final Cleaner CLEANER = Cleaner.create();
-	private static final Set<Path> LIVE_SPILL_FILES = ConcurrentHashMap.newKeySet();
+	private static final Set<SpillFile> LIVE_SPILL_FILES = ConcurrentHashMap.newKeySet();
 
 	static {
+		// closes the streams before deleting, so open files can also be removed on Windows
 		Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-			for ( Path path : LIVE_SPILL_FILES )
-				SpillFile.deleteQuietly(path);
+			for ( SpillFile spill : LIVE_SPILL_FILES )
+				spill.run();
 		}, "maxwell-spill-file-cleanup"));
 	}
 
@@ -160,7 +161,7 @@ public class ListWithDiskBuffer<T> implements Closeable {
 
 		final Path path;
 		final ObjectOutputStream os;
-		ObjectInputStream is;
+		volatile ObjectInputStream is;
 
 		private SpillFile(Path path, ObjectOutputStream os) {
 			this.path = path;
@@ -169,10 +170,11 @@ public class ListWithDiskBuffer<T> implements Closeable {
 
 		static SpillFile create() throws IOException {
 			Path path = Files.createTempFile("maxwell", "events", OWNER_ONLY);
-			LIVE_SPILL_FILES.add(path);
 			try {
 				ObjectOutputStream os = new ObjectOutputStream(new BufferedOutputStream(Files.newOutputStream(path)));
-				return new SpillFile(path, os);
+				SpillFile spill = new SpillFile(path, os);
+				LIVE_SPILL_FILES.add(spill);
+				return spill;
 			} catch ( IOException | RuntimeException e ) {
 				deleteQuietly(path);
 				throw e;
@@ -181,9 +183,13 @@ public class ListWithDiskBuffer<T> implements Closeable {
 
 		@Override
 		public void run() {
-			closeQuietly(is);
-			closeQuietly(os);
-			deleteQuietly(path);
+			try {
+				closeQuietly(is);
+				closeQuietly(os);
+				deleteQuietly(path);
+			} finally {
+				LIVE_SPILL_FILES.remove(this);
+			}
 		}
 
 		private static void closeQuietly(Closeable c) {
@@ -201,8 +207,6 @@ public class ListWithDiskBuffer<T> implements Closeable {
 				Files.deleteIfExists(path);
 			} catch ( IOException e ) {
 				LOGGER.warn("Failed to delete spill file " + path, e);
-			} finally {
-				LIVE_SPILL_FILES.remove(path);
 			}
 		}
 	}
