@@ -675,4 +675,49 @@ public class DDLParserTest {
 		assertThat(parse2,is(nullValue()));
 		assertThat(parse3,is(nullValue()));
 	}
+
+	@Test
+	public void testVersionedCommentsAboveServerVersionAreIgnored() {
+		List<SchemaChange> changes = SchemaChange.parse("default_db", "CREATE TABLE t (id int) /*!99999 ) */", 80035);
+		TableCreate create = (TableCreate) changes.get(0);
+		assertThat(create.columns.size(), is(1));
+
+		changes = SchemaChange.parse("default_db", "CREATE TABLE t (id int, b int AS /*!99999 (( */ (id+1))", 80035);
+		assertThat(((TableCreate) changes.get(0)).columns.size(), is(2));
+
+		changes = SchemaChange.parse("default_db", "CREATE TABLE t (id int /*!80036 , ignored int */)", 80035);
+		assertThat(((TableCreate) changes.get(0)).columns.size(), is(1));
+	}
+
+	@Test
+	public void testVersionedCommentsAtOrBelowServerVersionAreParsed() {
+		List<SchemaChange> changes = SchemaChange.parse("default_db", "CREATE TABLE t (id int /*!80035 , live int */ /*!50003 , old int */)", 80035);
+		assertThat(((TableCreate) changes.get(0)).columns.size(), is(3));
+
+		TableCreate create = (TableCreate) SchemaChange.parse("default_db", "CREATE TABLE /*!32312 IF NOT EXISTS*/ foo (id int)", 80035).get(0);
+		assertThat(create.ifNotExists, is(true));
+
+		create = (TableCreate) SchemaChange.parse("default_db", "CREATE TABLE /*! IF NOT EXISTS */ foo (id int)", 80035).get(0);
+		assertThat(create.ifNotExists, is(true));
+	}
+
+	@Test
+	public void testVersionedCommentInsideStringIsNotAComment() {
+		TableCreate create = (TableCreate) SchemaChange.parse("default_db", "CREATE TABLE t (id int COMMENT '/*!99999 ) */')", 80035).get(0);
+		assertThat(create.columns.size(), is(1));
+	}
+
+	@Test
+	public void testInactiveVersionedCommentDoesNotTriggerBlacklist() {
+		List<SchemaChange> changes = SchemaChange.parse("default_db", "/*!99999 GRANT */ CREATE TABLE t (id int)", 80035);
+		assertThat(changes, is(notNullValue()));
+		assertThat(changes.size(), is(1));
+
+		assertThat(SchemaChange.parse("default_db", "/*!50003 DROP FUNCTION IF EXISTS `foo` */", 80035), is(nullValue()));
+	}
+
+	@Test(expected = MaxwellSQLSyntaxError.class)
+	public void testUnbalancedSkipParensFailsWithSyntaxError() {
+		SchemaChange.parse("default_db", "CREATE TABLE t (id int, b int AS ((id+1))");
+	}
 }

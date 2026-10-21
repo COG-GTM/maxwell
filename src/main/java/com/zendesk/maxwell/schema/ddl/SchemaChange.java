@@ -54,7 +54,10 @@ public abstract class SchemaChange {
 
 	private static final Pattern CSTYLE_COMMENTS = Pattern.compile("/\\*.*?\\*/", Pattern.DOTALL);
 
-	private static boolean matchesBlacklist(String sql) {
+	private static boolean matchesBlacklist(String sql, Integer serverVersionId) {
+		// drop /*!NNNNN ... */ comments that the server ignores because NNNNN is above its version
+		sql = VersionComments.stripInactive(sql, serverVersionId);
+
 		// first *include* /*50032 CREATE EVENT */ style sql
 		sql = sql.replaceAll("/\\*M?!\\d+\\s*(.*)\\*/", "$1");
 
@@ -83,9 +86,10 @@ public abstract class SchemaChange {
 		return false;
 	}
 
-	private static List<SchemaChange> parseSQL(String currentDB, String sql) {
+	private static List<SchemaChange> parseSQL(String currentDB, String sql, Integer serverVersionId) {
 		ANTLRInputStream input = new ANTLRInputStream(sql);
 		mysqlLexer lexer = new mysqlLexer(input);
+		lexer.setServerVersionId(serverVersionId);
 		lexer.removeErrorListeners();
 
 		TokenStream tokens = new CommonTokenStream(lexer);
@@ -106,13 +110,22 @@ public abstract class SchemaChange {
 	}
 
 	public static List<SchemaChange> parse(String currentDB, String sql) {
-		if ( matchesBlacklist(sql) ) {
+		return parse(currentDB, sql, null);
+	}
+
+	/**
+	 * @param serverVersionId the source server's version as major * 10000 + minor * 100 + patch
+	 *                        (e.g. 80035), used to evaluate {@code /*!NNNNN ... *}{@code /} comments the
+	 *                        same way the server did. When null, every versioned comment body is parsed.
+	 */
+	public static List<SchemaChange> parse(String currentDB, String sql, Integer serverVersionId) {
+		if ( matchesBlacklist(sql, serverVersionId) ) {
 			return null;
 		}
 
 		while ( true ) {
 			try {
-				return parseSQL(currentDB, sql);
+				return parseSQL(currentDB, sql, serverVersionId);
 			} catch ( ReparseSQLException e ) {
 				sql = e.getSQL();
 				LOGGER.debug("rewrote SQL to {}", sql);

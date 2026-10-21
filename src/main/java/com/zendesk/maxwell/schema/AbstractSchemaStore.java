@@ -7,6 +7,7 @@ import java.util.ArrayList;
 
 import com.zendesk.maxwell.CaseSensitivity;
 import com.zendesk.maxwell.filtering.Filter;
+import com.zendesk.maxwell.replication.MysqlVersion;
 import com.zendesk.maxwell.util.ConnectionPool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,7 @@ public abstract class AbstractSchemaStore {
 	protected final ConnectionPool schemaConnectionPool;
 	protected final CaseSensitivity caseSensitivity;
 	private final Filter filter;
+	private Integer serverVersionId;
 
 	protected AbstractSchemaStore(ConnectionPool replicationConnectionPool,
 								  ConnectionPool schemaConnectionPool,
@@ -45,8 +47,19 @@ public abstract class AbstractSchemaStore {
 		}
 	}
 
+	private Integer getServerVersionId() {
+		if ( serverVersionId == null && replicationConnectionPool != null ) {
+			try ( Connection c = replicationConnectionPool.getConnection() ) {
+				serverVersionId = MysqlVersion.captureVersionId(c);
+			} catch ( SQLException e ) {
+				LOGGER.warn("unable to determine server version; versioned comments in DDL will be parsed unconditionally", e);
+			}
+		}
+		return serverVersionId;
+	}
+
 	protected List<ResolvedSchemaChange> resolveSQL(Schema schema, String sql, String currentDatabase) throws InvalidSchemaError {
-		List<SchemaChange> changes = SchemaChange.parse(currentDatabase, sql);
+		List<SchemaChange> changes = SchemaChange.parse(currentDatabase, sql, getServerVersionId());
 
 		if ( changes == null || changes.size() == 0 )
 			return new ArrayList<>();

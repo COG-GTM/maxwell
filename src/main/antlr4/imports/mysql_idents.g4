@@ -45,6 +45,7 @@ tablespace: TABLESPACE '='? (id | string_literal);
 if_not_exists: IF NOT EXISTS;
 
 
+SQL_INACTIVE_UPGRADE_COMMENT: '/*!' {isInactiveVersionComment()}? .*? '*/' -> skip;
 SQL_UPGRADE_COMMENT: '/*!' [0-9]* -> skip;
 SQL_UPGRADE_ENDCOMMENT: '*/' -> skip;
 
