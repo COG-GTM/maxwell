@@ -321,7 +321,13 @@ Requests without a valid token receive a `401`. When `http_config` is enabled an
 `http_bind_address` explicitly to expose it on other interfaces.
 
 Currently only filter updates are supported. Filters submitted over http are limited
-to 8KB, and regexes with nested quantifiers (e.g. `/(a+)+/`) are rejected.
+to 8KB, and regexes prone to catastrophic backtracking are rejected: nested quantifiers
+(e.g. `/(a+)+/`), back-to-back unbounded quantifiers (e.g. `/a*a*/`, `/\s*\w+/`) and more
+than 3 unbounded quantifiers in one pattern.
+
+The bearer token is sent in clear text, since the http server does not speak TLS. If you
+set `http_bind_address` to a non-loopback address, only expose it on a trusted network or
+behind a TLS-terminating proxy.
 A filter can be updated with a request in the following format
 
 `PATCH: /config`

@@ -9,13 +9,15 @@ import java.util.regex.Pattern;
  * Best-effort rejection of filter regexes prone to catastrophic backtracking.
  * <p>
  * Used for filters that arrive from untrusted sources (the http /config endpoint).
- * Rejects patterns longer than {@link #MAX_PATTERN_LENGTH} and patterns where a
- * repeated group itself contains a repeated element, e.g. <code>(a+)+</code>,
- * <code>(a*b?)*</code> or <code>((ab)+){2,}</code>.
+ * Rejects patterns that are longer than {@link #MAX_PATTERN_LENGTH}, that repeat a
+ * group which itself contains a repeated element (<code>(a+)+</code>, <code>((ab)+){2,}</code>),
+ * that place two unbounded quantifiers back to back (<code>a*a*</code>, <code>\\s*\\w+</code>),
+ * or that use more than {@link #MAX_UNBOUNDED_QUANTIFIERS} unbounded quantifiers.
  * </p>
  */
 public class FilterRegexGuard {
 	public static final int MAX_PATTERN_LENGTH = 1024;
+	public static final int MAX_UNBOUNDED_QUANTIFIERS = 3;
 
 	public static void check(List<FilterPattern> patterns) throws InvalidFilterException {
 		for ( FilterPattern p : patterns ) {
@@ -30,68 +32,79 @@ public class FilterRegexGuard {
 		String regex = pattern.pattern();
 		if ( regex.length() > MAX_PATTERN_LENGTH )
 			throw new InvalidFilterException("pattern exceeds " + MAX_PATTERN_LENGTH + " characters");
-		if ( hasNestedQuantifier(regex) )
-			throw new InvalidFilterException("pattern contains a nested quantifier (possible catastrophic backtracking): /" + regex + "/");
+		String risk = backtrackingRisk(regex);
+		if ( risk != null )
+			throw new InvalidFilterException("pattern contains " + risk + " (possible catastrophic backtracking): /" + regex + "/");
 	}
 
 	static boolean hasNestedQuantifier(String regex) {
-		Deque<Boolean> groupHasRepeat = new ArrayDeque<>();
-		groupHasRepeat.push(false);
+		return "a nested quantifier".equals(backtrackingRisk(regex));
+	}
+
+	/* returns a description of the backtracking risk found in regex, or null */
+	static String backtrackingRisk(String regex) {
+		// per group level: [0] = contains a repeated element, [1] = previous element has an unbounded quantifier
+		Deque<boolean[]> levels = new ArrayDeque<>();
+		levels.push(new boolean[2]);
+		int unboundedCount = 0;
 
 		int i = 0;
 		int len = regex.length();
 		while ( i < len ) {
 			char c = regex.charAt(i);
+			int atomEnd;
+			boolean innerRepeats = false;
+			boolean groupClose = false;
 			switch ( c ) {
 				case '\\':
 					if ( i + 1 < len && regex.charAt(i + 1) == 'Q' ) {
 						int end = regex.indexOf("\\E", i + 2);
-						i = end < 0 ? len : end + 2;
+						atomEnd = end < 0 ? len : end + 2;
 					} else {
-						i += 2;
+						atomEnd = Math.min(i + 2, len);
 					}
 					break;
 				case '[':
-					i = skipCharClass(regex, i);
+					atomEnd = skipCharClass(regex, i);
 					break;
 				case '(':
-					groupHasRepeat.push(false);
+					levels.push(new boolean[2]);
 					i++;
+					continue;
+				case ')':
+					innerRepeats = levels.size() > 1 && levels.pop()[0];
+					groupClose = true;
+					atomEnd = i + 1;
 					break;
-				case ')': {
-					boolean innerRepeats = groupHasRepeat.size() > 1 ? groupHasRepeat.pop() : false;
-					int quantEnd = quantifierEnd(regex, i + 1);
-					boolean groupRepeated = quantEnd > i + 1 && isRepeatingQuantifier(regex.substring(i + 1, quantEnd));
-					if ( innerRepeats && groupRepeated )
-						return true;
-					if ( innerRepeats || groupRepeated )
-						markRepeat(groupHasRepeat);
-					i = Math.max(quantEnd, i + 1);
-					break;
-				}
-				case '*':
-				case '+':
-				case '{': {
-					int quantEnd = quantifierEnd(regex, i);
-					if ( quantEnd > i ) {
-						if ( isRepeatingQuantifier(regex.substring(i, quantEnd)) )
-							markRepeat(groupHasRepeat);
-						i = quantEnd;
-					} else {
-						i++;
-					}
-					break;
-				}
+				case '|':
+					levels.peek()[1] = false;
+					i++;
+					continue;
 				default:
-					i++;
+					atomEnd = i + 1;
 			}
-		}
-		return false;
-	}
 
-	private static void markRepeat(Deque<Boolean> stack) {
-		stack.pop();
-		stack.push(true);
+			int quantEnd = quantifierEnd(regex, atomEnd);
+			String quantifier = quantEnd > atomEnd ? regex.substring(atomEnd, quantEnd) : null;
+			boolean repeating = quantifier != null && isRepeatingQuantifier(quantifier);
+			boolean unbounded = quantifier != null && isUnboundedQuantifier(quantifier);
+
+			if ( groupClose && innerRepeats && repeating )
+				return "a nested quantifier";
+
+			boolean[] level = levels.peek();
+			if ( unbounded ) {
+				if ( level[1] )
+					return "adjacent unbounded quantifiers";
+				if ( ++unboundedCount > MAX_UNBOUNDED_QUANTIFIERS )
+					return "more than " + MAX_UNBOUNDED_QUANTIFIERS + " unbounded quantifiers";
+			}
+			level[1] = unbounded;
+			if ( repeating || innerRepeats )
+				level[0] = true;
+			i = quantEnd;
+		}
+		return null;
 	}
 
 	private static int skipCharClass(String regex, int start) {
@@ -147,6 +160,11 @@ public class FilterRegexGuard {
 		if ( parts.length == 1 )
 			return greaterThanOne(parts[0]);
 		return parts[1].isEmpty() || greaterThanOne(parts[1]);
+	}
+
+	private static boolean isUnboundedQuantifier(String q) {
+		char c = q.charAt(0);
+		return c == '*' || c == '+' || (c == '{' && q.matches("\\{\\d+,\\}.*"));
 	}
 
 	private static boolean greaterThanOne(String digits) {

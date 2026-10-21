@@ -23,7 +23,7 @@ public class FilterRegexGuardTest {
 		assertTrue(FilterRegexGuard.hasNestedQuantifier("(a+)+"));
 		assertTrue(FilterRegexGuard.hasNestedQuantifier("(a*)*"));
 		assertTrue(FilterRegexGuard.hasNestedQuantifier("^(\\w+\\s?)*$"));
-		assertTrue(FilterRegexGuard.hasNestedQuantifier("(x+x+)+y"));
+		assertNotNull(FilterRegexGuard.backtrackingRisk("(x+x+)+y"));
 		assertTrue(FilterRegexGuard.hasNestedQuantifier("((ab)+){2,}"));
 		assertTrue(FilterRegexGuard.hasNestedQuantifier("(?:a{1,10}b)+"));
 		assertTrue(FilterRegexGuard.hasNestedQuantifier("((a+))+"));
@@ -43,12 +43,28 @@ public class FilterRegexGuardTest {
 	}
 
 	@Test
+	public void testPolynomialBacktracking() {
+		assertEquals("adjacent unbounded quantifiers", FilterRegexGuard.backtrackingRisk("a*a*a*a*a*b"));
+		assertEquals("adjacent unbounded quantifiers", FilterRegexGuard.backtrackingRisk(".*.*=.*"));
+		assertEquals("adjacent unbounded quantifiers", FilterRegexGuard.backtrackingRisk("\\d+\\d{2,}x"));
+		assertEquals("adjacent unbounded quantifiers", FilterRegexGuard.backtrackingRisk("[a-z]+?[a-z]*$"));
+		assertNotNull(FilterRegexGuard.backtrackingRisk(".*a.*a.*a.*a"));
+
+		assertNull(FilterRegexGuard.backtrackingRisk(".*foo.*bar.*"));
+		assertNull(FilterRegexGuard.backtrackingRisk("^\\d+\\.\\d+$"));
+		assertNull(FilterRegexGuard.backtrackingRisk("a*|a*"));
+		assertNull(FilterRegexGuard.backtrackingRisk("a{1,5}a{1,5}"));
+		assertNull(FilterRegexGuard.backtrackingRisk("a*\\*a*"));
+	}
+
+	@Test
 	public void testFilterLevelCheck() throws InvalidFilterException {
 		assertAccepted("exclude: *.*, include: db.tbl, blacklist: bad_db.*, include: /^foo_\\d+$/./bar/");
 		assertAccepted("exclude: db.tbl.col = /^(foo|bar)$/");
 		assertRejected("include: /(a+)+$/.*");
 		assertRejected("include: *./(a*)*b/");
 		assertRejected("exclude: db.tbl.col = /^(\\w+\\s?)*$/");
+		assertRejected("exclude: db.tbl.col = /a*a*a*a*a*b/");
 
 		StringBuilder longRegex = new StringBuilder();
 		for ( int i = 0; i <= FilterRegexGuard.MAX_PATTERN_LENGTH; i++ )
