@@ -561,6 +561,37 @@ public class MaxwellConfig extends AbstractConfig {
 	public boolean rabbitmqUseSSL;
 
 	/**
+	 * {@link com.zendesk.maxwell.producer.RabbitmqProducer} truststore used to verify the broker certificate.
+	 * Defaults to the JVM trust store.
+	 */
+	public String rabbitmqSslTruststore;
+
+	/**
+	 * {@link com.zendesk.maxwell.producer.RabbitmqProducer} truststore password
+	 */
+	public String rabbitmqSslTruststorePassword;
+
+	/**
+	 * {@link com.zendesk.maxwell.producer.RabbitmqProducer} truststore type (JKS, PKCS12, ...)
+	 */
+	public String rabbitmqSslTruststoreType;
+
+	/**
+	 * {@link com.zendesk.maxwell.producer.RabbitmqProducer} keystore holding a client certificate (mutual TLS)
+	 */
+	public String rabbitmqSslKeystore;
+
+	/**
+	 * {@link com.zendesk.maxwell.producer.RabbitmqProducer} keystore password
+	 */
+	public String rabbitmqSslKeystorePassword;
+
+	/**
+	 * {@link com.zendesk.maxwell.producer.RabbitmqProducer} keystore type (JKS, PKCS12, ...)
+	 */
+	public String rabbitmqSslKeystoreType;
+
+	/**
 	 * {@link com.zendesk.maxwell.producer.NatsProducer} URL
 	 */
 	public String natsUrl;
@@ -975,6 +1006,12 @@ public class MaxwellConfig extends AbstractConfig {
 		parser.accepts( "rabbitmq_message_persistent", "Message persistence. Defaults to false" ).withOptionalArg();
 		parser.accepts( "rabbitmq_declare_exchange", "Should declare the exchange for rabbitmq publisher. Defaults to true" ).withOptionalArg();
 		parser.accepts( "rabbitmq_use_ssl", "If true, will connect to the server using SSL. Defaults to false" ).withOptionalArg();
+		parser.accepts( "rabbitmq_ssl_truststore", "Truststore used to verify the RabbitMQ broker certificate. Defaults to the JVM trust store" ).withRequiredArg();
+		parser.accepts( "rabbitmq_ssl_truststore_password", "Password of rabbitmq_ssl_truststore" ).withRequiredArg();
+		parser.accepts( "rabbitmq_ssl_truststore_type", "Type of rabbitmq_ssl_truststore (JKS, PKCS12). Defaults to the JVM default keystore type" ).withRequiredArg();
+		parser.accepts( "rabbitmq_ssl_keystore", "Keystore with a client certificate for mutual TLS with the RabbitMQ broker" ).withRequiredArg();
+		parser.accepts( "rabbitmq_ssl_keystore_password", "Password of rabbitmq_ssl_keystore" ).withRequiredArg();
+		parser.accepts( "rabbitmq_ssl_keystore_type", "Type of rabbitmq_ssl_keystore (JKS, PKCS12). Defaults to the JVM default keystore type" ).withRequiredArg();
 
 		parser.section( "redis" );
 
@@ -1128,6 +1165,12 @@ public class MaxwellConfig extends AbstractConfig {
 		this.rabbitmqMessagePersistent    	= fetchBooleanOption("rabbitmq_message_persistent", options, properties, false);
 		this.rabbitmqDeclareExchange		= fetchBooleanOption("rabbitmq_declare_exchange", options, properties, true);
 		this.rabbitmqUseSSL			= fetchBooleanOption("rabbitmq_use_ssl", options, properties, false);
+		this.rabbitmqSslTruststore		= fetchStringOption("rabbitmq_ssl_truststore", options, properties, null);
+		this.rabbitmqSslTruststorePassword	= fetchStringOption("rabbitmq_ssl_truststore_password", options, properties, null);
+		this.rabbitmqSslTruststoreType	= fetchStringOption("rabbitmq_ssl_truststore_type", options, properties, null);
+		this.rabbitmqSslKeystore		= fetchStringOption("rabbitmq_ssl_keystore", options, properties, null);
+		this.rabbitmqSslKeystorePassword	= fetchStringOption("rabbitmq_ssl_keystore_password", options, properties, null);
+		this.rabbitmqSslKeystoreType		= fetchStringOption("rabbitmq_ssl_keystore_type", options, properties, null);
 
 		this.natsUrl			= fetchStringOption("nats_url", options, properties, "nats://localhost:4222");
 		this.natsSubject		= fetchStringOption("nats_subject", options, properties, "%{database}.%{table}");

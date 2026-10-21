@@ -309,6 +309,19 @@ The remaining configurable properties are:
 - `rabbitmq_message_persistent` - defaults to **false**
 - `rabbitmq_declare_exchange` - defaults to **true**
 - `rabbitmq_use_ssl` - defaults to **false**
+- `rabbitmq_ssl_truststore` - truststore used to verify the broker certificate, defaults to the JVM trust store
+- `rabbitmq_ssl_truststore_password` - password of `rabbitmq_ssl_truststore`
+- `rabbitmq_ssl_truststore_type` - type of `rabbitmq_ssl_truststore` (`JKS`, `PKCS12`), defaults to the JVM default keystore type
+- `rabbitmq_ssl_keystore` - keystore with a client certificate, for mutual TLS. Defaults to the JVM keystore (`javax.net.ssl.keyStore`)
+- `rabbitmq_ssl_keystore_password` - password of `rabbitmq_ssl_keystore`
+- `rabbitmq_ssl_keystore_type` - type of `rabbitmq_ssl_keystore` (`JKS`, `PKCS12`), defaults to the JVM default keystore type
+
+TLS is enabled by `rabbitmq_use_ssl=true` or by an `amqps://` `rabbitmq_uri`. In both cases Maxwell
+verifies the broker's certificate chain against the configured truststore (or the JVM trust store) and checks
+that the certificate matches the broker hostname. Maxwell refuses to start if TLS is requested but the
+truststore or keystore can't be loaded, or if `rabbitmq_ssl_truststore`/`rabbitmq_ssl_keystore` is set while
+TLS is off. Brokers with self-signed or private-CA certificates need that certificate or CA in
+`rabbitmq_ssl_truststore`.
 
 For more details on these options, you are encouraged to the read official RabbitMQ documentation here: [https://www.rabbitmq.com/documentation.html](https://www.rabbitmq.com/documentation.html)
 

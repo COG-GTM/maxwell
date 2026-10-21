@@ -240,6 +240,12 @@ kafka.acks=1
 #rabbitmq_message_persistent=false
 #rabbitmq_declare_exchange=true
 #rabbitmq_use_ssl=false
+#rabbitmq_ssl_truststore=/path/to/rabbitmq-truststore.p12
+#rabbitmq_ssl_truststore_password=changeit
+#rabbitmq_ssl_truststore_type=PKCS12
+#rabbitmq_ssl_keystore=/path/to/maxwell-client.p12
+#rabbitmq_ssl_keystore_password=changeit
+#rabbitmq_ssl_keystore_type=PKCS12
 
 #           *** redis ***
 
