@@ -1,5 +1,6 @@
 package com.zendesk.maxwell.bootstrap;
 
+import com.zendesk.maxwell.errors.DuplicateProcessException;
 import com.zendesk.maxwell.producer.AbstractProducer;
 import com.zendesk.maxwell.row.RowMap;
 import com.zendesk.maxwell.row.RowMapBuffer;
@@ -14,7 +15,9 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Watches maxwell.bootstrap, starts and stops bootstrap tasks
@@ -22,6 +25,8 @@ import java.util.List;
 public class BootstrapController extends RunLoopProcess  {
 	static final Logger LOGGER = LoggerFactory.getLogger(BootstrapController.class);
 	private final long MAX_TX_ELEMENTS = 10000;
+	static final int MAX_TASK_ATTEMPTS = 3;
+	static final long RETRY_BACKOFF_MILLIS = 1000;
 
 	private final ConnectionPool maxwellConnectionPool;
 	private final SynchronousBootstrapper bootstrapper;
@@ -63,6 +68,7 @@ public class BootstrapController extends RunLoopProcess  {
 	private Object completionMutex = new Object();
 	private BootstrapTask activeTask;
 	private RowMapBuffer skippedRows = new RowMapBuffer(MAX_TX_ELEMENTS);
+	private final Map<Long, Integer> taskFailures = new HashMap<>();
 
 	@Override
 	protected void work() throws Exception {
@@ -71,6 +77,7 @@ public class BootstrapController extends RunLoopProcess  {
 		} catch ( InterruptedException e ) {
 		} catch ( SQLException e ) {
 			LOGGER.error("got SQLException trying to bootstrap", e);
+			Thread.sleep(RETRY_BACKOFF_MILLIS);
 		}
 	}
 
@@ -78,23 +85,60 @@ public class BootstrapController extends RunLoopProcess  {
 		List<BootstrapTask> tasks = getIncompleteTasks();
 		synchronized(bootstrapMutex) {
 			for ( BootstrapTask task : tasks ) {
-				if (LOGGER.isDebugEnabled()) {
-					LOGGER.debug("starting bootstrap task: {}", task.logString());
-				}
-				synchronized(completionMutex) {
-					activeTask = task;
-				}
-
-				bootstrapper.startBootstrap(task, producer, getCurrentSchemaID());
-
-				synchronized(completionMutex) {
-					pushSkippedRows();
-					activeTask = null;
-				}
+				runTask(task);
 			}
 		}
 
-		Thread.sleep(1000);
+		Thread.sleep(RETRY_BACKOFF_MILLIS);
+	}
+
+	/**
+	 * Run a single bootstrap task.  A failing task never escapes this method:
+	 * buffered live rows are always released, and after MAX_TASK_ATTEMPTS
+	 * consecutive failures the task is aborted (marked complete) so that one
+	 * bad maxwell.bootstrap row can't stop replication or starve other tasks.
+	 *
+	 * @param task the task to run
+	 * @throws Exception on interruption, a duplicate maxwell process, or a failure to release buffered rows
+	 */
+	void runTask(BootstrapTask task) throws Exception {
+		if (LOGGER.isDebugEnabled()) {
+			LOGGER.debug("starting bootstrap task: {}", task.logString());
+		}
+		synchronized(completionMutex) {
+			activeTask = task;
+		}
+
+		try {
+			bootstrapper.startBootstrap(task, producer, getCurrentSchemaID());
+			taskFailures.remove(task.id);
+		} catch ( InterruptedException | DuplicateProcessException e ) {
+			throw e;
+		} catch ( Exception e ) {
+			handleTaskFailure(task, e);
+		} finally {
+			synchronized(completionMutex) {
+				activeTask = null;
+				pushSkippedRows();
+			}
+		}
+	}
+
+	private void handleTaskFailure(BootstrapTask task, Exception e) throws Exception {
+		int failures = taskFailures.merge(task.id, 1, Integer::sum);
+		LOGGER.error("bootstrap task {} failed (attempt {} of {})", task.logString(), failures, MAX_TASK_ATTEMPTS, e);
+
+		if ( failures < MAX_TASK_ATTEMPTS )
+			return;
+
+		try {
+			bootstrapper.abortBootstrap(task, "giving up after " + failures + " failed attempts: " + e);
+			taskFailures.remove(task.id);
+		} catch ( InterruptedException | DuplicateProcessException abortError ) {
+			throw abortError;
+		} catch ( Exception abortError ) {
+			LOGGER.error("could not mark bootstrap task {} as aborted", task.logString(), abortError);
+		}
 	}
 
 	private synchronized Long getCurrentSchemaID() {

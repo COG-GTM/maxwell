@@ -61,11 +61,23 @@ public class SynchronousBootstrapper {
 		try {
 			performBootstrap(task, producer, currentSchemaID);
 		} catch ( BootstrapAbortException e ) {
-			LOGGER.error("Bootstrap (id={}) aborted: {}", task.id, e.getMessage());
-			setBootstrapRowToCompleted(0, task.id);
+			abortBootstrap(task, e.getMessage());
 			return;
 		}
 		completeBootstrap(task, producer);
+	}
+
+	/**
+	 * Give up on a bootstrap task: log the reason and mark its row complete so
+	 * that it is not picked up again.
+	 *
+	 * @param task   the bootstrap task
+	 * @param reason why the task is being abandoned
+	 * @throws Exception if the bootstrap row can't be updated
+	 */
+	public void abortBootstrap(BootstrapTask task, String reason) throws Exception {
+		LOGGER.error("Bootstrap (id={}) aborted: {}", task.id, reason);
+		setBootstrapRowToCompleted(0, task.id);
 	}
 
 	private Schema captureSchemaForBootstrap(BootstrapTask task) throws SQLException {
@@ -85,7 +97,7 @@ public class SynchronousBootstrapper {
 		}
 
 		Database database = schema.findDatabase(task.database);
-		Table table = database.findTable(task.table);
+		Table table = database == null ? null : database.findTable(task.table);
 
 		if ( table == null ) {
 			String errMsg = String.format(

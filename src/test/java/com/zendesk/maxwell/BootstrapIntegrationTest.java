@@ -6,6 +6,7 @@ import com.zendesk.maxwell.producer.MaxwellOutputConfig;
 import com.zendesk.maxwell.row.RowMap;
 import org.junit.Test;
 
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.ArrayList;
@@ -44,6 +45,15 @@ public class BootstrapIntegrationTest extends MaxwellTestWithIsolatedServer {
 	@Test
 	public void testReservedWordPkBootstrap() throws Exception {
 		runJSON("json/bootstrap-reserved-word-pk");
+	}
+
+	@Test
+	public void testIgnoredDatabaseBootstrapIsAborted() throws Exception {
+		runJSON("json/bootstrap-ignored-database");
+
+		ResultSet rs = server.query("select is_complete from maxwell.bootstrap where database_name = 'performance_schema'");
+		assertThat(rs.next(), is(true));
+		assertThat(rs.getBoolean("is_complete"), is(true));
 	}
 
 	@Test
