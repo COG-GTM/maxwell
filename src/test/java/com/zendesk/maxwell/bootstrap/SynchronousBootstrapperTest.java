@@ -156,4 +156,17 @@ public class SynchronousBootstrapperTest {
 		assertThat(SynchronousBootstrapper.shouldBootstrapTable(filter, "maxwell", "heartbeats", COLUMNS), is(true));
 		assertThat(SynchronousBootstrapper.shouldBootstrapTable(filter, "maxwell", "positions", COLUMNS), is(false));
 	}
+
+	@Test
+	public void testRowCheckSeesFilterUpdatedMidBootstrap() throws Exception {
+		Filter filter = new Filter("maxwell", "");
+		RowMap row = rowWithStatus("shard_1", "orders", "open");
+		assertThat(SynchronousBootstrapper.shouldBootstrapRow(filter, "shard_1", "orders", row), is(true));
+
+		filter.set("blacklist: shard_1.orders");
+		assertThat(SynchronousBootstrapper.shouldBootstrapRow(filter, "shard_1", "orders", row), is(false));
+
+		filter.set("exclude: shard_1.*");
+		assertThat(SynchronousBootstrapper.shouldBootstrapRow(filter, "shard_1", "orders", row), is(false));
+	}
 }

@@ -87,7 +87,7 @@ public class SynchronousBootstrapper {
 		}
 
 		Database database = schema.findDatabase(task.database);
-		Table table = database.findTable(task.table);
+		Table table = database == null ? null : database.findTable(task.table);
 
 		if ( table == null ) {
 			String errMsg = String.format(
@@ -135,7 +135,7 @@ public class SynchronousBootstrapper {
 				RowMap row = bootstrapEventRowMap("bootstrap-insert", table.database, table.name, table.getPKList(), task.comment);
 				setRowValues(row, resultSet, table);
 
-				if ( shouldBootstrapRow(filter, table.database, table.name, row) ) {
+				if ( shouldBootstrapRow(context.getFilter(), table.database, table.name, row) ) {
 					row.setSchemaId(currentSchemaID);
 
 					Scripting scripting = context.getConfig().scripting;
