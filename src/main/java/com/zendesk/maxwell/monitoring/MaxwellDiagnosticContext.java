@@ -50,7 +50,7 @@ public class MaxwellDiagnosticContext {
 			Matcher m = INTERPOLATION.matcher(topicTemplate);
 			int last = 0;
 			while (m.find()) {
-				regex.append(Pattern.quote(topicTemplate.substring(last, m.start()))).append(".*");
+				regex.append(Pattern.quote(topicTemplate.substring(last, m.start()))).append(".+");
 				last = m.end();
 			}
 			regex.append(Pattern.quote(topicTemplate.substring(last)));
