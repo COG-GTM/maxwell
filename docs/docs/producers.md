@@ -312,7 +312,7 @@ The remaining configurable properties are:
 - `rabbitmq_ssl_truststore` - truststore used to verify the broker certificate, defaults to the JVM trust store
 - `rabbitmq_ssl_truststore_password` - password of `rabbitmq_ssl_truststore`
 - `rabbitmq_ssl_truststore_type` - type of `rabbitmq_ssl_truststore` (`JKS`, `PKCS12`), defaults to the JVM default keystore type
-- `rabbitmq_ssl_keystore` - keystore with a client certificate, for mutual TLS
+- `rabbitmq_ssl_keystore` - keystore with a client certificate, for mutual TLS. Defaults to the JVM keystore (`javax.net.ssl.keyStore`)
 - `rabbitmq_ssl_keystore_password` - password of `rabbitmq_ssl_keystore`
 - `rabbitmq_ssl_keystore_type` - type of `rabbitmq_ssl_keystore` (`JKS`, `PKCS12`), defaults to the JVM default keystore type
 

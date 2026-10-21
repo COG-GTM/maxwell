@@ -71,6 +71,9 @@ public class RabbitmqProducer extends AbstractProducer {
 
 			if ( config.rabbitmqPort != null ) {
 				factory.setPort(config.rabbitmqPort);
+			} else if ( useTls && !uriHasPort(config.rabbitmqURI) ) {
+				// setUri() resets the port to 5672 for amqp:// URIs even when TLS is on
+				factory.setPort(ConnectionFactory.DEFAULT_AMQP_OVER_SSL_PORT);
 			}
 
 			if ( config.rabbitmqUser != null ) {
@@ -112,26 +115,57 @@ public class RabbitmqProducer extends AbstractProducer {
 		}
 	}
 
+	private static boolean uriHasPort(String uri) {
+		if ( uri == null ) {
+			return false;
+		}
+
+		try {
+			return new URI(uri).getPort() != -1;
+		} catch (URISyntaxException e) {
+			throw new IllegalArgumentException("Invalid rabbitmq_uri", e);
+		}
+	}
+
 	private static boolean hasTlsStoreOptions(MaxwellConfig config) {
 		return config.rabbitmqSslTruststore != null || config.rabbitmqSslKeystore != null;
 	}
 
 	static SSLContext buildSslContext(MaxwellConfig config) throws GeneralSecurityException, IOException {
+		if ( !hasTlsStoreOptions(config) ) {
+			// JVM trust store and client identity (javax.net.ssl.* or SSLContext.setDefault)
+			return SSLContext.getDefault();
+		}
+
 		TrustManagerFactory trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
 		// a null KeyStore makes the factory use the JVM default trust store
 		trustManagerFactory.init(loadKeyStore(config.rabbitmqSslTruststore, config.rabbitmqSslTruststoreType, config.rabbitmqSslTruststorePassword));
 
-		KeyManager[] keyManagers = null;
+		KeyManager[] keyManagers;
 		if ( config.rabbitmqSslKeystore != null ) {
-			char[] password = toChars(config.rabbitmqSslKeystorePassword);
-			KeyManagerFactory keyManagerFactory = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
-			keyManagerFactory.init(loadKeyStore(config.rabbitmqSslKeystore, config.rabbitmqSslKeystoreType, config.rabbitmqSslKeystorePassword), password);
-			keyManagers = keyManagerFactory.getKeyManagers();
+			keyManagers = keyManagers(config.rabbitmqSslKeystore, config.rabbitmqSslKeystoreType, config.rabbitmqSslKeystorePassword);
+		} else {
+			keyManagers = jvmKeyManagers();
 		}
 
 		SSLContext context = SSLContext.getInstance("TLS");
 		context.init(keyManagers, trustManagerFactory.getTrustManagers(), null);
 		return context;
+	}
+
+	private static KeyManager[] jvmKeyManagers() throws GeneralSecurityException, IOException {
+		String path = System.getProperty("javax.net.ssl.keyStore");
+		if ( path == null || path.isEmpty() || "NONE".equals(path) ) {
+			return null;
+		}
+
+		return keyManagers(path, System.getProperty("javax.net.ssl.keyStoreType"), System.getProperty("javax.net.ssl.keyStorePassword"));
+	}
+
+	private static KeyManager[] keyManagers(String path, String type, String password) throws GeneralSecurityException, IOException {
+		KeyManagerFactory keyManagerFactory = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+		keyManagerFactory.init(loadKeyStore(path, type, password), toChars(password));
+		return keyManagerFactory.getKeyManagers();
 	}
 
 	private static KeyStore loadKeyStore(String path, String type, String password) throws GeneralSecurityException, IOException {

@@ -143,6 +143,54 @@ public class RabbitmqProducerTest {
 	}
 
 	@Test
+	public void presentsJvmClientCertificateWhenNoRabbitmqKeystoreIsSet() throws Exception {
+		MaxwellConfig config = new MaxwellConfig();
+		config.rabbitmqUseSSL = true;
+		config.rabbitmqHost = "localhost";
+		config.rabbitmqSslTruststore = localhostTruststore.getAbsolutePath();
+		config.rabbitmqSslTruststorePassword = PASSWORD;
+
+		String[] keys = { "javax.net.ssl.keyStore", "javax.net.ssl.keyStoreType", "javax.net.ssl.keyStorePassword" };
+		String[] saved = new String[keys.length];
+		for ( int i = 0; i < keys.length; i++ ) {
+			saved[i] = System.getProperty(keys[i]);
+		}
+
+		try ( FakeTlsBroker broker = new FakeTlsBroker(localhostKeystore, clientTruststore) ) {
+			System.setProperty("javax.net.ssl.keyStore", clientKeystore.getAbsolutePath());
+			System.setProperty("javax.net.ssl.keyStoreType", "PKCS12");
+			System.setProperty("javax.net.ssl.keyStorePassword", PASSWORD);
+			config.rabbitmqPort = broker.port();
+
+			connect(config);
+			assertTrue(broker.receivedAmqpHeader());
+		} finally {
+			for ( int i = 0; i < keys.length; i++ ) {
+				if ( saved[i] == null ) {
+					System.clearProperty(keys[i]);
+				} else {
+					System.setProperty(keys[i], saved[i]);
+				}
+			}
+		}
+	}
+
+	@Test
+	public void useSslWithPortlessAmqpUriUsesTlsPort() {
+		MaxwellConfig config = new MaxwellConfig();
+		config.rabbitmqUseSSL = true;
+		config.rabbitmqURI = "amqp://localhost";
+
+		assertEquals(ConnectionFactory.DEFAULT_AMQP_OVER_SSL_PORT, RabbitmqProducer.createConnectionFactory(config).getPort());
+
+		config.rabbitmqURI = "amqp://localhost:1234";
+		assertEquals(1234, RabbitmqProducer.createConnectionFactory(config).getPort());
+
+		config.rabbitmqPort = 4321;
+		assertEquals(4321, RabbitmqProducer.createConnectionFactory(config).getPort());
+	}
+
+	@Test
 	public void failsClosedWhenTruststoreCannotBeLoaded() {
 		MaxwellConfig config = new MaxwellConfig();
 		config.rabbitmqURI = "amqps://localhost";
