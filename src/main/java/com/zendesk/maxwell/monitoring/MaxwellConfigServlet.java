@@ -14,9 +14,9 @@ import com.zendesk.maxwell.filtering.InvalidFilterException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintWriter;
-import java.util.stream.Collectors;
 
 /**
  * An HTTP servlet which allows for the live reconfiguration of maxwell. If
@@ -25,6 +25,7 @@ import java.util.stream.Collectors;
 public class MaxwellConfigServlet extends HttpServlet {
 	private static final java.lang.String CONTENT_TYPE = "application/json";
 	private static final ObjectMapper mapper = new ObjectMapper();
+	static final int MAX_BODY_BYTES = 64 * 1024;
 	static final Logger LOGGER = LoggerFactory.getLogger(MaxwellConfigServlet.class);
 	private final MaxwellContext context;
 
@@ -54,9 +55,18 @@ public class MaxwellConfigServlet extends HttpServlet {
 	}
 
 	private void handleConfigUpdateRequest(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+		if (req.getContentLengthLong() > MAX_BODY_BYTES) {
+			writeError(resp, HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE, "request body too large");
+			return;
+		}
+
 		SerializedConfig sconfig;
 		try {
-			String reqbody = req.getReader().lines().collect(Collectors.joining(System.lineSeparator()));
+			String reqbody = readBody(req);
+			if (reqbody == null) {
+				writeError(resp, HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE, "request body too large");
+				return;
+			}
 			sconfig = mapper.readValue(reqbody, SerializedConfig.class);
 		} catch (Exception e) {
 			resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
@@ -83,6 +93,27 @@ public class MaxwellConfigServlet extends HttpServlet {
 				writer.println(ErrorResponse.getErrorResponseString(HttpServletResponse.SC_BAD_REQUEST,
 						String.format("invalid filter: %s", e.getMessage())));
 			}
+		}
+	}
+
+	private static String readBody(HttpServletRequest req) throws IOException {
+		StringBuilder sb = new StringBuilder();
+		char[] buf = new char[4096];
+		BufferedReader reader = req.getReader();
+		int n;
+		while ((n = reader.read(buf)) != -1) {
+			if (sb.length() + n > MAX_BODY_BYTES)
+				return null;
+			sb.append(buf, 0, n);
+		}
+		return sb.toString();
+	}
+
+	private static void writeError(HttpServletResponse resp, int code, String message) throws IOException {
+		resp.setStatus(code);
+		resp.setContentType(CONTENT_TYPE);
+		try (PrintWriter writer = resp.getWriter()) {
+			writer.println(ErrorResponse.getErrorResponseString(code, message));
 		}
 	}
 
@@ -130,7 +161,7 @@ public class MaxwellConfigServlet extends HttpServlet {
 	private void applySerializedConfig(SerializedConfig sconfig) throws InvalidFilterException {
 		if (sconfig.filter != null) {
 			context.getFilter().set(sconfig.filter);
-			LOGGER.info("updated filter: " + sconfig.filter);
+			LOGGER.info("updated filter: " + sconfig.filter.replaceAll("[\\r\\n]", "_"));
 		}
 	}
 }

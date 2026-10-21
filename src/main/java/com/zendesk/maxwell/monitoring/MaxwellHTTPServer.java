@@ -6,33 +6,43 @@ import com.codahale.metrics.servlets.PingServlet;
 import com.zendesk.maxwell.MaxwellConfig;
 import com.zendesk.maxwell.MaxwellContext;
 import com.zendesk.maxwell.util.StoppableTask;
-import jnr.ffi.annotations.In;
 import org.eclipse.jetty.server.Server;
+import org.eclipse.jetty.servlet.FilterHolder;
 import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.servlet.DispatcherType;
 import java.io.IOException;
+import java.util.EnumSet;
 import java.util.concurrent.TimeoutException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.UnknownHostException;
 
 import static com.zendesk.maxwell.monitoring.MaxwellMetrics.reportingTypeHttp;
 
 public class MaxwellHTTPServer {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(MaxwellHTTPServer.class);
+	static final String LOOPBACK_BIND_ADDRESS = "127.0.0.1";
 
 	public static void startIfRequired(MaxwellContext context) throws IOException {
 		MaxwellMetrics.Registries metricsRegistries = getMetricsRegistries(context);
 		MaxwellDiagnosticContext diagnosticContext = getDiagnosticContext(context);
 		if (metricsRegistries != null || diagnosticContext != null || context.getConfig().enableHttpConfig) {
 			LOGGER.info("Maxwell http server starting");
-			int port = context.getConfig().httpPort;
-			String httpBindAddress = context.getConfig().httpBindAddress;
-			String pathPrefix = context.getConfig().httpPathPrefix;
-			MaxwellHTTPServerWorker maxwellHTTPServerWorker = new MaxwellHTTPServerWorker(httpBindAddress, port, pathPrefix, metricsRegistries, diagnosticContext, context);
+			MaxwellConfig config = context.getConfig();
+			int port = config.httpPort;
+			boolean sensitiveEndpoints = config.enableHttpConfig || diagnosticContext != null;
+			String httpBindAddress = resolveBindAddress(config.httpBindAddress, sensitiveEndpoints);
+			String pathPrefix = config.httpPathPrefix;
+			String authToken = sensitiveEndpoints ? requireAuthToken(config.httpAuthToken) : null;
+			if ( sensitiveEndpoints && !isLoopback(httpBindAddress) )
+				LOGGER.warn("http_bind_address " + httpBindAddress + " exposes /config or /diagnostic beyond loopback over plain HTTP; "
+					+ "http_auth_token is sent in cleartext, so front the server with a TLS proxy or tunnel");
+			MaxwellHTTPServerWorker maxwellHTTPServerWorker = new MaxwellHTTPServerWorker(httpBindAddress, port, pathPrefix, metricsRegistries, diagnosticContext, authToken, context);
 			Thread thread = new Thread(maxwellHTTPServerWorker);
 
 			context.addTask(maxwellHTTPServerWorker);
@@ -43,8 +53,32 @@ public class MaxwellHTTPServer {
 
 			thread.setDaemon(true);
 			thread.start();
-			LOGGER.info("Maxwell http server started on port " + port);
+			LOGGER.info("Maxwell http server started on " + (httpBindAddress == null ? "*" : httpBindAddress) + ":" + port);
 		}
+	}
+
+	static String resolveBindAddress(String configured, boolean sensitiveEndpoints) {
+		if ( configured != null )
+			return configured;
+		return sensitiveEndpoints ? LOOPBACK_BIND_ADDRESS : null;
+	}
+
+	static boolean isLoopback(String bindAddress) {
+		if ( bindAddress == null )
+			return false;
+		try {
+			return InetAddress.getByName(bindAddress).isLoopbackAddress();
+		} catch ( UnknownHostException e ) {
+			return false;
+		}
+	}
+
+	static String requireAuthToken(String token) throws IOException {
+		if ( token == null || token.trim().isEmpty() )
+			throw new IOException("http_auth_token is required when http_config or http_diagnostic is enabled");
+		if ( !token.equals(token.trim()) )
+			throw new IOException("http_auth_token must not have leading or trailing whitespace");
+		return token;
 	}
 
 	private static MaxwellMetrics.Registries getMetricsRegistries(MaxwellContext context) throws IOException {
@@ -79,15 +113,17 @@ class MaxwellHTTPServerWorker implements StoppableTask, Runnable {
 	private final String pathPrefix;
 	private final MaxwellMetrics.Registries metricsRegistries;
 	private final MaxwellDiagnosticContext diagnosticContext;
+	private final String authToken;
 	private final MaxwellContext context;
 	private Server server;
 
-	public MaxwellHTTPServerWorker(String bindAddress, int port, String pathPrefix, MaxwellMetrics.Registries metricsRegistries, MaxwellDiagnosticContext diagnosticContext, MaxwellContext context) {
+	public MaxwellHTTPServerWorker(String bindAddress, int port, String pathPrefix, MaxwellMetrics.Registries metricsRegistries, MaxwellDiagnosticContext diagnosticContext, String authToken, MaxwellContext context) {
 		this.bindAddress = bindAddress;
 		this.port = port;
 		this.pathPrefix = pathPrefix;
 		this.metricsRegistries = metricsRegistries;
 		this.diagnosticContext = diagnosticContext;
+		this.authToken = authToken;
 		this.context = context;
 	}
 
@@ -118,17 +154,23 @@ class MaxwellHTTPServerWorker implements StoppableTask, Runnable {
 		}
 
 		if (this.context.getConfig().enableHttpConfig) {
+			requireAuth(handler, "/config");
 			handler.addServlet(new ServletHolder(new MaxwellConfigServlet(this.context)), "/config");
 			indexList.addLink("/config", "POST endpoing to update maxwell config.");
 		}
 
 		if (diagnosticContext != null) {
+			requireAuth(handler, "/diagnostic");
 			handler.addServlet(new ServletHolder(new DiagnosticHealthCheck(diagnosticContext)), "/diagnostic");
 			indexList.addLink("/diagnostic", "deeper diagnostic health checks");
 		}
 
 		this.server.start();
 		this.server.join();
+	}
+
+	private void requireAuth(ServletContextHandler handler, String path) {
+		handler.addFilter(new FilterHolder(new HttpAuthTokenFilter(authToken)), path, EnumSet.allOf(DispatcherType.class));
 	}
 
 	@Override

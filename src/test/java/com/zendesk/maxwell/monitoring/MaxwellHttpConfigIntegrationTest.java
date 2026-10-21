@@ -13,13 +13,25 @@ import java.net.URL;
 import java.net.http.*;
 
 public class MaxwellHttpConfigIntegrationTest extends MaxwellTestWithIsolatedServer {
+	private static final String TOKEN = "test-token";
 
 	private HttpResponse<String> getConfig() throws IOException, InterruptedException {
 		HttpClient client = HttpClient.newHttpClient();
 		HttpRequest request = HttpRequest.newBuilder()
     .uri(URI.create("http://localhost:22222/config"))
+		.header("Authorization", "Bearer " + TOKEN)
 		.build();
 		return client.send(request, HttpResponse.BodyHandlers.ofString());
+	}
+
+	private HttpResponse<String> unauthenticated(String method, String token) throws IOException, InterruptedException {
+		HttpClient client = HttpClient.newHttpClient();
+		HttpRequest.Builder builder = HttpRequest.newBuilder()
+		.method(method, HttpRequest.BodyPublishers.ofString("{\"filter\":\"include: *.*\"}"))
+		.uri(URI.create("http://localhost:22222/config"));
+		if ( token != null )
+			builder.header("Authorization", "Bearer " + token);
+		return client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
 	}
 
 	private HttpResponse<String> updateConfig(String method, String filter) throws IOException, InterruptedException {
@@ -27,6 +39,7 @@ public class MaxwellHttpConfigIntegrationTest extends MaxwellTestWithIsolatedSer
 		HttpRequest request = HttpRequest.newBuilder()
 		.method(method, HttpRequest.BodyPublishers.ofString(String.format("{\"filter\":\"%s\"}", filter)))
     .uri(URI.create("http://localhost:22222/config"))
+		.header("Authorization", "Bearer " + TOKEN)
 		.build();
 		return client.send(request, HttpResponse.BodyHandlers.ofString());
 	}
@@ -37,6 +50,7 @@ public class MaxwellHttpConfigIntegrationTest extends MaxwellTestWithIsolatedSer
 			URL url = new URL("http://localhost:22222/config");
 
 			HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+			connection.setRequestProperty("Authorization", "Bearer " + TOKEN);
 			InputStream responseStream = connection.getInputStream();
 
 			responseStream.read();
@@ -57,6 +71,17 @@ public class MaxwellHttpConfigIntegrationTest extends MaxwellTestWithIsolatedSer
 						HttpResponse<String> cfg = getConfig();
 						Assert.assertEquals(cfg.statusCode(), 200);
 						Assert.assertEquals(cfg.body(), "{\"filter\":null}\n");
+
+						// unauthenticated / wrong-token requests are rejected and don't touch the filter
+						Assert.assertEquals(401, unauthenticated("GET", null).statusCode());
+						Assert.assertEquals(401, unauthenticated("PUT", null).statusCode());
+						Assert.assertEquals(401, unauthenticated("PATCH", "wrong").statusCode());
+						Assert.assertEquals(cfg.body(), getConfig().body());
+
+						// unterminated regexp is rejected instead of hanging the worker thread
+						cfg = updateConfig("PATCH", "include: a./x");
+						Assert.assertEquals(400, cfg.statusCode());
+						Assert.assertEquals("{\"filter\":null}\n", getConfig().body());
 
 						// test valid post
 						updateConfig("PUT", "exclude: *.*, blacklist: bad_db.*");
@@ -100,6 +125,7 @@ public class MaxwellHttpConfigIntegrationTest extends MaxwellTestWithIsolatedSer
 		MaxwellTestSupport.getRowsWithReplicator(server, cb, (config) -> {
 			config.httpPort = 22222;
 			config.enableHttpConfig = true;
+			config.httpAuthToken = TOKEN;
 		});
 
 	}

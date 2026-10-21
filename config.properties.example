@@ -357,6 +357,15 @@ kafka.acks=1
 # Diagnostic check timeout in milliseconds, required if diagnostic = true
 #http_diagnostic_timeout=10000 # default 10000
 
+# Shared secret required as "Authorization: Bearer <token>" on /diagnostic and /config.
+# Mandatory when http_diagnostic or http_config is enabled.
+#http_auth_token=CHANGE_ME
+
+# When http_diagnostic or http_config is enabled the http server binds to 127.0.0.1
+# unless http_bind_address is set explicitly.
+# The bearer token is sent in cleartext over plain HTTP; front non-loopback binds with a TLS proxy.
+#http_bind_address=127.0.0.1
+
 #    *** misc ***
 
 # maxwell's bootstrapping functionality has a couple of modes.

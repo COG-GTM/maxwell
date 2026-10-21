@@ -361,6 +361,12 @@ public class MaxwellConfig extends AbstractConfig {
 	public String httpPathPrefix;
 
 	/**
+	 * shared secret required (as "Authorization: Bearer &lt;token&gt;") on the
+	 * /config and /diagnostic endpoints
+	 */
+	public String httpAuthToken;
+
+	/**
 	 * path prefix for metrics server
 	 */
 	public String metricsPrefix;
@@ -1006,7 +1012,8 @@ public class MaxwellConfig extends AbstractConfig {
 
 		parser.accepts( "http_port", "the port the server will bind to when http reporting is configured" ).withRequiredArg().ofType(Integer.class);
 		parser.accepts( "http_path_prefix", "the http path prefix when metrics_type includes http or diagnostic is enabled, default /" ).withRequiredArg();
-		parser.accepts( "http_bind_address", "the ip address the server will bind to when http reporting is configured" ).withRequiredArg();
+		parser.accepts( "http_bind_address", "the ip address the server will bind to when http reporting is configured. default: all addresses, or 127.0.0.1 when http_config or http_diagnostic is enabled" ).withRequiredArg();
+		parser.accepts( "http_auth_token", "shared secret required as 'Authorization: Bearer <token>' on /config and /diagnostic; mandatory when http_config or http_diagnostic is enabled" ).withRequiredArg();
 		parser.accepts( "http_diagnostic", "enable http diagnostic endpoint: true|false. default: false" ).withOptionalArg().ofType(Boolean.class);
 		parser.accepts( "http_diagnostic_timeout", "the http diagnostic response timeout in ms when http_diagnostic=true. default: 10000" ).withRequiredArg().ofType(Integer.class);
 		parser.accepts( "http_config", "enable http config update endpoint: true|false. default: false" ).withOptionalArg().ofType(Boolean.class);
@@ -1192,6 +1199,7 @@ public class MaxwellConfig extends AbstractConfig {
 		this.httpPort = fetchIntegerOption("http_port", options, properties, 8080);
 		this.httpBindAddress = fetchStringOption("http_bind_address", options, properties, null);
 		this.httpPathPrefix = fetchStringOption("http_path_prefix", options, properties, "/");
+		this.httpAuthToken = fetchStringOption("http_auth_token", options, properties, null);
 
 		if (!this.httpPathPrefix.startsWith("/")) {
 			this.httpPathPrefix = "/" + this.httpPathPrefix;
@@ -1339,12 +1347,23 @@ public class MaxwellConfig extends AbstractConfig {
 		}
 	}
 
+	private void validateHttpAuth() {
+		boolean sensitiveEndpoints = this.enableHttpConfig
+			|| (this.diagnosticConfig != null && this.diagnosticConfig.enable);
+		if ( sensitiveEndpoints && StringUtils.isBlank(this.httpAuthToken) ) {
+			usageForOptions("please specify --http_auth_token when http_config or http_diagnostic is enabled", "http_auth_token", "http_config", "http_diagnostic");
+		} else if ( sensitiveEndpoints && !this.httpAuthToken.equals(this.httpAuthToken.trim()) ) {
+			usageForOptions("--http_auth_token must not have leading or trailing whitespace", "http_auth_token");
+		}
+	}
+
 	/**
 	 * Validate the maxwell configuration, exiting with an error message if invalid.
 	 */
 	public void validate() {
 		validatePartitionBy();
 		validateFilter();
+		validateHttpAuth();
 
 		if ( this.producerType.equals("kafka") ) {
 			if ( !this.kafkaProperties.containsKey("bootstrap.servers") ) {

@@ -159,5 +159,76 @@ public class FilterTest {
 		Filter f = new Filter("");
 		assertEquals(f.toString(), "");
 	}
-}
 
+	@Test(timeout = 5000)
+	public void TestUnterminatedRegexpIsRejected() throws Exception {
+		for ( String input : new String[] { "include: db./abc", "include: /abc", "include: a.b.col=/x", "include: db./abc\\/" } ) {
+			try {
+				runParserTest(input);
+				fail("expected InvalidFilterException for " + input);
+			} catch ( InvalidFilterException e ) {
+				assertTrue(e.getMessage(), e.getMessage().contains("unterminated regexp"));
+			}
+		}
+	}
+
+	@Test(timeout = 5000)
+	public void TestOverlongRegexpIsRejected() throws Exception {
+		StringBuilder sb = new StringBuilder();
+		for ( int i = 0; i <= FilterParser.MAX_REGEXP_LENGTH; i++ )
+			sb.append('a');
+		try {
+			runParserTest("include: /" + sb + "/.*");
+			fail("expected InvalidFilterException");
+		} catch ( InvalidFilterException e ) {
+			assertTrue(e.getMessage(), e.getMessage().contains("maximum length"));
+		}
+	}
+
+	@Test(timeout = 5000)
+	public void TestUnterminatedRegexpViaSetKeepsExistingRules() throws Exception {
+		Filter f = new Filter("exclude: *.*, include: foo.bar");
+		try {
+			f.set("include: a./x");
+			fail("expected InvalidFilterException");
+		} catch ( InvalidFilterException e ) { }
+		assertEquals("exclude: *.*, include: foo.bar", f.toString());
+	}
+
+	@Test
+	public void TestGetRulesIsDetachedCopy() throws Exception {
+		Filter f = new Filter("exclude: *.*");
+		f.getRules().clear();
+		assertEquals(1, f.getRules().size());
+		f.addRule("include: foo.bar");
+		assertEquals("exclude: *.*, include: foo.bar", f.toString());
+	}
+
+	@Test(timeout = 30000)
+	public void TestConcurrentSetNeverExposesEmptyRuleSet() throws Exception {
+		Filter f = new Filter("exclude: secret_db.*, blacklist: bad_db.*");
+		java.util.concurrent.atomic.AtomicBoolean stop = new java.util.concurrent.atomic.AtomicBoolean(false);
+		java.util.concurrent.atomic.AtomicReference<Throwable> failure = new java.util.concurrent.atomic.AtomicReference<>();
+
+		Thread writer = new Thread(() -> {
+			try {
+				while ( !stop.get() )
+					f.set("exclude: secret_db.*, blacklist: bad_db.*, include: a.b, include: c.d");
+			} catch ( Throwable t ) {
+				failure.compareAndSet(null, t);
+			}
+		});
+		writer.start();
+		try {
+			for ( int i = 0; i < 200_000 && failure.get() == null; i++ ) {
+				assertFalse("excluded table leaked during swap", f.includes("secret_db", "users"));
+				assertTrue("blacklist dropped during swap", f.isTableBlacklisted("bad_db", "t"));
+			}
+		} finally {
+			stop.set(true);
+			writer.join();
+		}
+		if ( failure.get() != null )
+			throw new AssertionError(failure.get());
+	}
+}
