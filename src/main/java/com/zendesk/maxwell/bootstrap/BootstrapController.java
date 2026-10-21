@@ -107,7 +107,8 @@ public class BootstrapController extends RunLoopProcess  {
 		synchronized(bootstrapMutex) {
 			for ( BootstrapTask task : tasks ) {
 				if ( isExhausted(task) ) {
-					abandonTask(task, "a previous attempt to abandon it failed");
+					if ( !abandonTask(task, "a previous attempt to abandon it failed") )
+						anyFailed = true;
 					continue;
 				}
 
@@ -123,6 +124,10 @@ public class BootstrapController extends RunLoopProcess  {
 					taskFailures.remove(task.id);
 				} catch ( InterruptedException e ) {
 					throw e;
+				} catch ( SynchronousBootstrapper.BootstrapProducerException e ) {
+					// the producer is failing, not the task: retry without counting it against the task
+					anyFailed = true;
+					LOGGER.error("producer failed during bootstrap task {}, will retry", task.logString(), e.getCause());
 				} catch ( Exception e ) {
 					anyFailed = true;
 					recordTaskFailure(task, e);
@@ -154,12 +159,14 @@ public class BootstrapController extends RunLoopProcess  {
 		}
 	}
 
-	private void abandonTask(BootstrapTask task, String reason) {
+	private boolean abandonTask(BootstrapTask task, String reason) {
 		try {
-			bootstrapper.abandonBootstrap(task, reason);
+			bootstrapper.abandonBootstrap(task, producer, reason);
 			taskFailures.remove(task.id);
+			return true;
 		} catch ( Exception e ) {
-			LOGGER.error("couldn't mark bootstrap task {} as abandoned, will try again", task.logString(), e);
+			LOGGER.error("couldn't abandon bootstrap task {}, will try again", task.logString(), e);
+			return false;
 		}
 	}
 

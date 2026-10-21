@@ -38,6 +38,16 @@ public class SynchronousBootstrapper {
 		}
 	}
 
+	/**
+	 * The producer failed to accept a bootstrap row.  This is an output problem,
+	 * not a problem with the task itself.
+	 */
+	static class BootstrapProducerException extends Exception {
+		public BootstrapProducerException(Throwable cause) {
+			super(cause);
+		}
+	}
+
 	static final Logger LOGGER = LoggerFactory.getLogger(SynchronousBootstrapper.class);
 	private static final long INSERTED_ROWS_UPDATE_PERIOD_MILLIS = 1000;
 	private final MaxwellContext context;
@@ -69,14 +79,18 @@ public class SynchronousBootstrapper {
 	}
 
 	/**
-	 * Give up on a task that keeps failing: mark it complete so it leaves the queue.
+	 * Give up on a task that keeps failing: emit bootstrap-complete so consumers
+	 * see the (possibly partial) bootstrap terminated, then mark the task complete
+	 * so it leaves the queue.
 	 *
-	 * @param task   the bootstrap task
-	 * @param reason why the task is being abandoned, for the log
-	 * @throws Exception if the bootstrap row can't be updated
+	 * @param task     the bootstrap task
+	 * @param producer current producer
+	 * @param reason   why the task is being abandoned, for the log
+	 * @throws Exception if the completion event can't be pushed or the bootstrap row can't be updated
 	 */
-	public void abandonBootstrap(BootstrapTask task, String reason) throws Exception {
+	public void abandonBootstrap(BootstrapTask task, AbstractProducer producer, String reason) throws Exception {
 		LOGGER.error("Bootstrap (id={}) abandoned: {}", task.id, reason);
+		completeBootstrap(task, producer);
 		try {
 			setBootstrapRowToCompleted(0, task.id);
 		} catch ( NoSuchElementException e ) {
@@ -145,7 +159,7 @@ public class SynchronousBootstrapper {
 
 		Table table = getTableForTask(task);
 
-		producer.push(bootstrapStartRowMap(task, table));
+		push(producer, bootstrapStartRowMap(task, table));
 		LOGGER.info(String.format("bootstrapping started for %s.%s", task.database, task.table));
 
 		try ( Connection streamingConnection = getStreamingConnection(task.database)) {
@@ -165,7 +179,7 @@ public class SynchronousBootstrapper {
 				if ( LOGGER.isDebugEnabled() )
 					LOGGER.debug("bootstrapping row : {}", row.toJSON());
 
-				producer.push(row);
+				push(producer, row);
 				++insertedRows;
 
 				updateInsertedRowsColumn(insertedRows, task.id);
@@ -204,6 +218,16 @@ public class SynchronousBootstrapper {
 		return conn;
 	}
 
+	private static void push(AbstractProducer producer, RowMap row) throws InterruptedException, BootstrapProducerException {
+		try {
+			producer.push(row);
+		} catch ( InterruptedException e ) {
+			throw e;
+		} catch ( Exception e ) {
+			throw new BootstrapProducerException(e);
+		}
+	}
+
 	private RowMap bootstrapStartRowMap(BootstrapTask task, Table table) {
 		return bootstrapEventRowMap("bootstrap-start", table.database, table.name, table.getPKList(), task.comment);
 	}
@@ -228,7 +252,7 @@ public class SynchronousBootstrapper {
 	 * @throws Exception
 	 */
 	public void completeBootstrap(BootstrapTask task, AbstractProducer producer) throws Exception {
-		producer.push(bootstrapEventRowMap("bootstrap-complete", task.database, task.table, new ArrayList<>(), task.comment));
+		push(producer, bootstrapEventRowMap("bootstrap-complete", task.database, task.table, new ArrayList<>(), task.comment));
 		LOGGER.info("bootstrapping ended for " + task.logString());
 	}
 
