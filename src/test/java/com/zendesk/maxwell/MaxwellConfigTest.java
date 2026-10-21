@@ -2,6 +2,7 @@ package com.zendesk.maxwell;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.shyiko.mysql.binlog.network.SSLMode;
 import com.google.common.collect.ImmutableMap;
 import com.zendesk.maxwell.monitoring.MaxwellHealthCheck;
 import com.zendesk.maxwell.monitoring.MaxwellHealthCheckFactory;
@@ -153,6 +154,37 @@ public class MaxwellConfigTest
 		assertEquals(config.pubsubRpcTimeoutMultiplier, 1.0f, 0.0f);
 	}
 
+
+	@Test
+	public void testReplicationSslKeptWithoutReplicationHost() {
+		config = new MaxwellConfig(new String[] { "--host=localhost", "--user=maxwell", "--password=pw", "--replication_ssl=VERIFY_IDENTITY" });
+		config.validate();
+		assertEquals(SSLMode.DISABLED, config.maxwellMysql.sslMode);
+		assertEquals(SSLMode.VERIFY_IDENTITY, config.replicationMysql.sslMode);
+		assertEquals("localhost", config.replicationMysql.host);
+	}
+
+	@Test
+	public void testReplicationSslFallsBackToMaxwellSsl() {
+		config = new MaxwellConfig(new String[] { "--host=localhost", "--user=maxwell", "--password=pw", "--ssl=REQUIRED" });
+		config.validate();
+		assertEquals(SSLMode.REQUIRED, config.replicationMysql.sslMode);
+	}
+
+	@Test
+	public void testReplicationJdbcOptionsKeptWithoutReplicationHost() {
+		config = new MaxwellConfig(new String[] {
+			"--host=localhost", "--user=maxwell", "--password=pw",
+			"--jdbc_options=foo=bar&connectTimeout=1000",
+			"--replication_jdbc_options=sslMode=VERIFY_IDENTITY&connectTimeout=2000"
+		});
+		config.validate();
+		assertEquals("bar", config.replicationMysql.jdbcOptions.get("foo"));
+		assertEquals("VERIFY_IDENTITY", config.replicationMysql.jdbcOptions.get("sslMode"));
+		assertEquals("2000", config.replicationMysql.jdbcOptions.get("connectTimeout"));
+		assertEquals("1000", config.maxwellMysql.jdbcOptions.get("connectTimeout"));
+		assertNull(config.maxwellMysql.jdbcOptions.get("sslMode"));
+	}
 
 	private String getTestConfigDir() {
 		return System.getProperty("user.dir") + "/src/test/resources/config/";
