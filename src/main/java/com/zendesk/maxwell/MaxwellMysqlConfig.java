@@ -1,6 +1,7 @@
 package com.zendesk.maxwell;
 
 import java.net.URISyntaxException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -25,6 +26,12 @@ public class MaxwellMysqlConfig {
 
 	// pre-8.0.13 Connector/J flags superseded by sslMode
 	private static final List<String> LEGACY_JDBC_SSL_OPTIONS = Arrays.asList("useSSL", "requireSSL", "verifyServerCertificate");
+
+	private static final List<String> ENFORCED_JDBC_OPTIONS = new ArrayList<>(LEGACY_JDBC_SSL_OPTIONS);
+	static {
+		ENFORCED_JDBC_OPTIONS.add(JDBC_SSL_MODE);
+		ENFORCED_JDBC_OPTIONS.add(JDBC_ALLOW_PUBLIC_KEY_RETRIEVAL);
+	}
 
 	private static final List<SSLMode> SSL_MODES_BY_STRENGTH = Arrays.asList(
 		SSLMode.DISABLED, SSLMode.PREFERRED, SSLMode.REQUIRED, SSLMode.VERIFY_CA, SSLMode.VERIFY_IDENTITY
@@ -122,7 +129,8 @@ public class MaxwellMysqlConfig {
 	 * JDBC driver options for a connection: jdbcOptions plus Connector/J's {@code sslMode},
 	 * mapped one-to-one from {@link #sslMode}.  jdbcOptions itself is not modified.
 	 *
-	 * If jdbcOptions also sets {@code sslMode}, the stricter of the two modes wins.
+	 * If jdbcOptions also sets {@code sslMode}, the strictest mode wins.  Option names are
+	 * matched case-insensitively, as Connector/J does.
 	 * {@code allowPublicKeyRetrieval=true} is only passed through when the connection is
 	 * guaranteed to use TLS; otherwise an on-path attacker could answer the driver's
 	 * public key request with their own RSA key and recover the password.
@@ -130,30 +138,68 @@ public class MaxwellMysqlConfig {
 	 * @return a new map of JDBC options
 	 */
 	public Map<String, String> getJDBCConnectionOptions() {
-		Map<String, String> options = new LinkedHashMap<>(jdbcOptions);
+		Map<String, String> options = new LinkedHashMap<>();
+		List<String> jdbcSSLModes = new ArrayList<>();
+		String publicKeyRetrieval = null;
 
-		SSLMode effective = effectiveSSLMode(options.get(JDBC_SSL_MODE));
+		// Connector/J matches property names case-insensitively, so normalize the ones we enforce
+		for ( Map.Entry<String, String> opt : jdbcOptions.entrySet() ) {
+			String key = canonicalJDBCKey(opt.getKey());
+			String value = opt.getValue();
+			if ( key.equals(JDBC_SSL_MODE) ) {
+				jdbcSSLModes.add(value);
+			} else if ( key.equals(JDBC_ALLOW_PUBLIC_KEY_RETRIEVAL) ) {
+				if ( publicKeyRetrieval == null || !isFalse(value) )
+					publicKeyRetrieval = value;
+			} else {
+				options.put(key, value);
+			}
+		}
+
+		SSLMode effective = effectiveSSLMode(jdbcSSLModes);
 		if ( effective != null ) {
 			LEGACY_JDBC_SSL_OPTIONS.forEach(options::remove);
 			options.put(JDBC_SSL_MODE, effective.name());
+		} else if ( !jdbcSSLModes.isEmpty() ) {
+			options.put(JDBC_SSL_MODE, jdbcSSLModes.get(0));
 		}
 
-		if ( "true".equalsIgnoreCase(options.get(JDBC_ALLOW_PUBLIC_KEY_RETRIEVAL)) && !requiresTLS(effective) ) {
-			LOGGER.warn("ignoring allowPublicKeyRetrieval=true for mysql {}:{}: it requires ssl=REQUIRED|VERIFY_CA|VERIFY_IDENTITY. "
-				+ "Use serverRSAPublicKeyFile to authenticate with caching_sha2_password without TLS.", host, port);
-			options.put(JDBC_ALLOW_PUBLIC_KEY_RETRIEVAL, "false");
+		if ( publicKeyRetrieval != null ) {
+			if ( requiresTLS(effective) ) {
+				options.put(JDBC_ALLOW_PUBLIC_KEY_RETRIEVAL, publicKeyRetrieval);
+			} else {
+				if ( !isFalse(publicKeyRetrieval) ) {
+					LOGGER.warn("ignoring allowPublicKeyRetrieval={} for mysql {}:{}: it requires ssl=REQUIRED|VERIFY_CA|VERIFY_IDENTITY. "
+						+ "Use serverRSAPublicKeyFile to authenticate with caching_sha2_password without TLS.", publicKeyRetrieval, host, port);
+				}
+				options.put(JDBC_ALLOW_PUBLIC_KEY_RETRIEVAL, "false");
+			}
 		}
 
 		return options;
 	}
 
-	private SSLMode effectiveSSLMode(String jdbcSSLMode) {
-		SSLMode fromJdbc = parseSSLMode(jdbcSSLMode);
-		if ( sslMode == null )
-			return fromJdbc;
-		if ( fromJdbc == null )
-			return sslMode;
-		return SSL_MODES_BY_STRENGTH.indexOf(fromJdbc) > SSL_MODES_BY_STRENGTH.indexOf(sslMode) ? fromJdbc : sslMode;
+	private static String canonicalJDBCKey(String key) {
+		String trimmed = key.trim();
+		for ( String known : ENFORCED_JDBC_OPTIONS ) {
+			if ( known.equalsIgnoreCase(trimmed) )
+				return known;
+		}
+		return key;
+	}
+
+	private static boolean isFalse(String value) {
+		return value != null && ( value.trim().equalsIgnoreCase("false") || value.trim().equalsIgnoreCase("no") );
+	}
+
+	private SSLMode effectiveSSLMode(List<String> jdbcSSLModes) {
+		SSLMode effective = sslMode;
+		for ( String jdbcSSLMode : jdbcSSLModes ) {
+			SSLMode fromJdbc = parseSSLMode(jdbcSSLMode);
+			if ( fromJdbc != null && ( effective == null || SSL_MODES_BY_STRENGTH.indexOf(fromJdbc) > SSL_MODES_BY_STRENGTH.indexOf(effective) ) )
+				effective = fromJdbc;
+		}
+		return effective;
 	}
 
 	private static SSLMode parseSSLMode(String mode) {

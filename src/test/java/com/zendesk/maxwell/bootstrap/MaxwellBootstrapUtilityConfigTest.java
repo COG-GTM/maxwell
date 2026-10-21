@@ -42,6 +42,15 @@ public class MaxwellBootstrapUtilityConfigTest {
 	}
 
 	@Test
+	public void testSameHostReplicationSSLOverride() {
+		MaxwellBootstrapUtilityConfig config = config("--ssl=REQUIRED", "--replication_ssl=VERIFY_IDENTITY");
+		assertThat(params(config.getConnectionURI()), hasItem("sslMode=REQUIRED"));
+		assertThat(params(config.getReplicationConnectionURI()), hasItem("sslMode=VERIFY_IDENTITY"));
+		assertThat(config.getReplicationConnectionURI(), startsWith("jdbc:mysql://db.example:3306/shard_1?"));
+		assertThat(config.replicationMysql.user, is(config.mysql.user));
+	}
+
+	@Test
 	public void testNoPublicKeyRetrievalByDefault() {
 		MaxwellBootstrapUtilityConfig config = config();
 		assertThat(params(config.getConnectionURI()), not(hasItem(startsWith("allowPublicKeyRetrieval="))));

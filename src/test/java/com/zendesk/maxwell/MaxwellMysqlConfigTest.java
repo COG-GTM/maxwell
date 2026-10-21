@@ -111,6 +111,36 @@ public class MaxwellMysqlConfigTest {
 	}
 
 	@Test
+	public void testCaseVariantPublicKeyRetrievalIsRefusedWithoutRequiredSSL() throws URISyntaxException {
+		for ( String opts : Arrays.asList("AllowPublicKeyRetrieval=true", "ALLOWPUBLICKEYRETRIEVAL=yes",
+				"allowPublicKeyRetrieval=false&AllowPublicKeyRetrieval=true") ) {
+			MaxwellMysqlConfig config = buildConfig(SSLMode.PREFERRED);
+			config.setJDBCOptions(opts);
+			Set<String> params = uriParams(config);
+			assertThat(opts, params, hasItem("allowPublicKeyRetrieval=false"));
+			for ( String param : params )
+				assertThat(opts, param.toLowerCase().startsWith("allowpublickeyretrieval=") && !param.equals("allowPublicKeyRetrieval=false"), is(false));
+		}
+	}
+
+	@Test
+	public void testCaseVariantJdbcSSLModeCannotDowngrade() throws URISyntaxException {
+		MaxwellMysqlConfig config = buildConfig(SSLMode.VERIFY_IDENTITY);
+		config.setJDBCOptions("SSLMODE=DISABLED&UseSSL=false");
+		Set<String> params = uriParams(config);
+		assertThat(params, hasItem("sslMode=VERIFY_IDENTITY"));
+		for ( String param : params ) {
+			String lower = param.toLowerCase();
+			assertThat(param, lower.startsWith("sslmode=") && !param.equals("sslMode=VERIFY_IDENTITY"), is(false));
+			assertThat(param, lower.startsWith("usessl="), is(false));
+		}
+
+		config = buildConfig(null);
+		config.setJDBCOptions("SslMode=verify_ca");
+		assertThat(uriParams(config), hasItem("sslMode=VERIFY_CA"));
+	}
+
+	@Test
 	public void testBuildingTheUriDoesNotMutateJdbcOptions() throws URISyntaxException {
 		MaxwellMysqlConfig config = buildConfig(SSLMode.VERIFY_CA);
 		config.setJDBCOptions("allowPublicKeyRetrieval=true");
