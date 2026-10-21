@@ -45,7 +45,7 @@ tablespace: TABLESPACE '='? (id | string_literal);
 if_not_exists: IF NOT EXISTS;
 
 
-SQL_UPGRADE_COMMENT: '/*!' [0-9]* -> skip;
+SQL_UPGRADE_COMMENT: '/*!' [0-9]* { skipInactiveExecutableComment(); skip(); };
 SQL_UPGRADE_ENDCOMMENT: '*/' -> skip;
 
 MAXWELL_ELIDED_PARSE_ISSUE: '/__MAXWELL__/';
