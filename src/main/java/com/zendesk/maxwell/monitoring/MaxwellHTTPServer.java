@@ -19,6 +19,7 @@ import java.util.EnumSet;
 import java.util.concurrent.TimeoutException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.UnknownHostException;
 
 import static com.zendesk.maxwell.monitoring.MaxwellMetrics.reportingTypeHttp;
 
@@ -38,6 +39,9 @@ public class MaxwellHTTPServer {
 			String httpBindAddress = resolveBindAddress(config.httpBindAddress, sensitiveEndpoints);
 			String pathPrefix = config.httpPathPrefix;
 			String authToken = sensitiveEndpoints ? requireAuthToken(config.httpAuthToken) : null;
+			if ( sensitiveEndpoints && !isLoopback(httpBindAddress) )
+				LOGGER.warn("http_bind_address " + httpBindAddress + " exposes /config or /diagnostic beyond loopback over plain HTTP; "
+					+ "http_auth_token is sent in cleartext, so front the server with a TLS proxy or tunnel");
 			MaxwellHTTPServerWorker maxwellHTTPServerWorker = new MaxwellHTTPServerWorker(httpBindAddress, port, pathPrefix, metricsRegistries, diagnosticContext, authToken, context);
 			Thread thread = new Thread(maxwellHTTPServerWorker);
 
@@ -59,9 +63,21 @@ public class MaxwellHTTPServer {
 		return sensitiveEndpoints ? LOOPBACK_BIND_ADDRESS : null;
 	}
 
+	static boolean isLoopback(String bindAddress) {
+		if ( bindAddress == null )
+			return false;
+		try {
+			return InetAddress.getByName(bindAddress).isLoopbackAddress();
+		} catch ( UnknownHostException e ) {
+			return false;
+		}
+	}
+
 	static String requireAuthToken(String token) throws IOException {
 		if ( token == null || token.trim().isEmpty() )
 			throw new IOException("http_auth_token is required when http_config or http_diagnostic is enabled");
+		if ( !token.equals(token.trim()) )
+			throw new IOException("http_auth_token must not have leading or trailing whitespace");
 		return token;
 	}
 

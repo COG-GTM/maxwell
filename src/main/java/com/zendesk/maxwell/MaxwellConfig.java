@@ -1352,6 +1352,8 @@ public class MaxwellConfig extends AbstractConfig {
 			|| (this.diagnosticConfig != null && this.diagnosticConfig.enable);
 		if ( sensitiveEndpoints && StringUtils.isBlank(this.httpAuthToken) ) {
 			usageForOptions("please specify --http_auth_token when http_config or http_diagnostic is enabled", "http_auth_token", "http_config", "http_diagnostic");
+		} else if ( sensitiveEndpoints && !this.httpAuthToken.equals(this.httpAuthToken.trim()) ) {
+			usageForOptions("--http_auth_token must not have leading or trailing whitespace", "http_auth_token");
 		}
 	}
 

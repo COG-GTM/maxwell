@@ -363,6 +363,7 @@ kafka.acks=1
 
 # When http_diagnostic or http_config is enabled the http server binds to 127.0.0.1
 # unless http_bind_address is set explicitly.
+# The bearer token is sent in cleartext over plain HTTP; front non-loopback binds with a TLS proxy.
 #http_bind_address=127.0.0.1
 
 #    *** misc ***

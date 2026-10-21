@@ -22,6 +22,8 @@ public class HttpAuthTokenFilter implements Filter {
 	public HttpAuthTokenFilter(String token) {
 		if ( token == null || token.trim().isEmpty() )
 			throw new IllegalArgumentException("http auth token must not be empty");
+		if ( !token.equals(token.trim()) )
+			throw new IllegalArgumentException("http auth token must not have leading or trailing whitespace");
 		this.expectedToken = token.getBytes(StandardCharsets.UTF_8);
 	}
 

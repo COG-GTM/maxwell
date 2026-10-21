@@ -311,6 +311,8 @@ If `http_config` is set to true in config.properties or in the environment,
 the endpoint /config will be exposed. `http_auth_token` must also be set, and every
 request must send it as `Authorization: Bearer <token>`. Unless `http_bind_address`
 is set, the server only listens on 127.0.0.1 when `/config` or `/diagnostic` is enabled.
+The server speaks plain HTTP, so if you bind it beyond loopback, put it behind a TLS
+proxy or tunnel. Otherwise the token travels in cleartext.
 Currently only filter updates are supported,
 and a filter can be updated with a request in the following format
 

@@ -54,6 +54,28 @@ public class HttpAuthTokenFilterTest {
 	}
 
 	@Test
+	public void refusesTokenWithSurroundingWhitespace() {
+		for ( String t : new String[] { " s3cret", "s3cret ", "s3cret\t" } ) {
+			try {
+				new HttpAuthTokenFilter(t);
+				fail("accepted token with whitespace: '" + t + "'");
+			} catch ( IllegalArgumentException expected ) { }
+			try {
+				MaxwellHTTPServer.requireAuthToken(t);
+				fail("accepted token with whitespace: '" + t + "'");
+			} catch ( java.io.IOException expected ) { }
+		}
+	}
+
+	@Test
+	public void detectsLoopbackBindAddresses() {
+		assertTrue(MaxwellHTTPServer.isLoopback("127.0.0.1"));
+		assertTrue(MaxwellHTTPServer.isLoopback("::1"));
+		assertFalse(MaxwellHTTPServer.isLoopback("0.0.0.0"));
+		assertFalse(MaxwellHTTPServer.isLoopback(null));
+	}
+
+	@Test
 	public void bindsLoopbackByDefaultForSensitiveEndpoints() throws Exception {
 		assertEquals("127.0.0.1", MaxwellHTTPServer.resolveBindAddress(null, true));
 		assertNull(MaxwellHTTPServer.resolveBindAddress(null, false));
