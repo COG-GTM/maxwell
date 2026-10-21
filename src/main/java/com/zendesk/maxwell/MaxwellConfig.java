@@ -54,6 +54,8 @@ public class MaxwellConfig extends AbstractConfig {
 	 */
 	public int replicationReconnectionRetries;
 
+	private String replicationJdbcOptions;
+
 	/**
 	 * If non-null, specify a mysql server to capture schema from
 	 * If non, fallback to {@link #maxwellMysql}
@@ -1072,6 +1074,7 @@ public class MaxwellConfig extends AbstractConfig {
 
 		this.maxwellMysql       = parseMysqlConfig("", options, properties);
 		this.replicationMysql   = parseMysqlConfig("replication_", options, properties);
+		this.replicationJdbcOptions = fetchStringOption("replication_jdbc_options", options, properties, null);
 		this.schemaMysql        = parseMysqlConfig("schema_", options, properties);
 		this.gtidMode           = fetchBooleanOption("gtid_mode", options, properties, System.getenv(GTID_MODE_ENV) != null);
 
@@ -1432,17 +1435,23 @@ public class MaxwellConfig extends AbstractConfig {
 				usageForOptions("Please specify all of: replication_host, replication_user, replication_password", "--replication");
 			}
 
+			// keep an explicit replication_ssl / replication_jdbc_options when falling back to the maxwell host
+			SSLMode replicationSslMode = this.replicationMysql.sslMode != null
+				? this.replicationMysql.sslMode
+				: this.maxwellMysql.sslMode;
+
 			this.replicationMysql = new MaxwellMysqlConfig(
 				this.maxwellMysql.host,
 				this.maxwellMysql.port,
 				null,
 				this.maxwellMysql.user,
 				this.maxwellMysql.password,
-				this.maxwellMysql.sslMode,
+				replicationSslMode,
 				this.maxwellMysql.enableHeartbeat
 			);
 
-			this.replicationMysql.jdbcOptions = this.maxwellMysql.jdbcOptions;
+			this.replicationMysql.jdbcOptions = new HashMap<>(this.maxwellMysql.jdbcOptions);
+			this.replicationMysql.setJDBCOptions(this.replicationJdbcOptions);
 		}
 
 		if (this.replicationMysql.sslMode == null) {
