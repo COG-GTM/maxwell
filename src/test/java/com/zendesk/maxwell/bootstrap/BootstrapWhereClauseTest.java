@@ -76,6 +76,13 @@ public class BootstrapWhereClauseTest {
 	}
 
 	@Test
+	public void testNoBackslashEscapesTreatsBackslashLiterally() throws Exception {
+		BootstrapWhereClause w = BootstrapWhereClause.parse("text_field = 'a\\b' or text_field = 'c\\'", COLUMNS, true);
+		assertThat(w.getSQL(), is("((`text_field` = ?) OR (`text_field` = ?))"));
+		assertThat(w.getParams(), is(Arrays.<Object>asList("a\\b", "c\\")));
+	}
+
+	@Test
 	public void testInjectedQuotesStayInsideTheLiteral() throws Exception {
 		BootstrapWhereClause w = parse("text_field = 'x\\' UNION SELECT 1 -- '");
 		assertThat(w.getSQL(), is("(`text_field` = ?)"));

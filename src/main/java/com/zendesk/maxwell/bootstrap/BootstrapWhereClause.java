@@ -4,8 +4,11 @@ import com.zendesk.maxwell.util.Sql;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.*;
 
 /**
@@ -87,6 +90,41 @@ public class BootstrapWhereClause {
 	 * @throws InvalidWhereClauseException if the clause is not in the allowed grammar
 	 */
 	public static BootstrapWhereClause parse(String clause, Collection<String> columns) throws InvalidWhereClauseException {
+		return parse(clause, columns, false);
+	}
+
+	/**
+	 * Parse a where clause using the string-literal rules of the given connection's sql_mode.
+	 *
+	 * @param clause     the raw clause, may be null or blank
+	 * @param columns    column names of the table being bootstrapped
+	 * @param connection the connection the clause will run on
+	 * @return the parsed clause, or null if there is no clause
+	 * @throws InvalidWhereClauseException if the clause is not in the allowed grammar
+	 * @throws SQLException if sql_mode can't be read
+	 */
+	public static BootstrapWhereClause parse(String clause, Collection<String> columns, Connection connection) throws InvalidWhereClauseException, SQLException {
+		if ( clause == null || clause.trim().isEmpty() )
+			return null;
+		return parse(clause, columns, isNoBackslashEscapes(connection));
+	}
+
+	static boolean isNoBackslashEscapes(Connection connection) throws SQLException {
+		try ( Statement s = connection.createStatement();
+			  ResultSet rs = s.executeQuery("select @@session.sql_mode") ) {
+			String mode = rs.next() ? rs.getString(1) : null;
+			return mode != null && mode.toUpperCase(Locale.ROOT).contains("NO_BACKSLASH_ESCAPES");
+		}
+	}
+
+	/**
+	 * @param clause             the raw clause, may be null or blank
+	 * @param columns            column names of the table being bootstrapped
+	 * @param noBackslashEscapes treat backslashes in string literals literally, as mysql does under NO_BACKSLASH_ESCAPES
+	 * @return the parsed clause, or null if there is no clause
+	 * @throws InvalidWhereClauseException if the clause is not in the allowed grammar
+	 */
+	static BootstrapWhereClause parse(String clause, Collection<String> columns, boolean noBackslashEscapes) throws InvalidWhereClauseException {
 		if ( clause == null || clause.trim().isEmpty() )
 			return null;
 
@@ -97,7 +135,7 @@ public class BootstrapWhereClause {
 		for ( String c : columns )
 			columnsByLowerName.put(c.toLowerCase(Locale.ROOT), c);
 
-		Parser parser = new Parser(new Lexer(clause).tokenize(), columnsByLowerName);
+		Parser parser = new Parser(new Lexer(clause, noBackslashEscapes).tokenize(), columnsByLowerName);
 		String sql = parser.parseClause();
 		return new BootstrapWhereClause(sql, parser.params);
 	}
@@ -134,10 +172,12 @@ public class BootstrapWhereClause {
 		);
 
 		private final String input;
+		private final boolean noBackslashEscapes;
 		private int pos = 0;
 
-		Lexer(String input) {
+		Lexer(String input, boolean noBackslashEscapes) {
 			this.input = input;
+			this.noBackslashEscapes = noBackslashEscapes;
 		}
 
 		List<Token> tokenize() throws InvalidWhereClauseException {
@@ -204,7 +244,7 @@ public class BootstrapWhereClause {
 					pos++;
 					return sb.toString();
 				}
-				if ( c == '\\' && pos + 1 < input.length() ) {
+				if ( c == '\\' && !noBackslashEscapes && pos + 1 < input.length() ) {
 					sb.append(unescape(input.charAt(pos + 1)));
 					pos += 2;
 					continue;

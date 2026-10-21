@@ -124,46 +124,52 @@ public class SynchronousBootstrapper {
 		if ( !isTableIncluded(filter, table.database, table.name, table.getColumnNames()) )
 			throw new BootstrapAbortException(String.format("%s.%s is excluded by the configured filter", table.database, table.name));
 
-		BootstrapWhereClause whereClause;
-		try {
-			whereClause = BootstrapWhereClause.parse(task.whereClause, table.getColumnNames());
-		} catch ( BootstrapWhereClause.InvalidWhereClauseException e ) {
-			throw new BootstrapAbortException("rejected where_clause: " + e.getMessage());
-		}
-
-		producer.push(bootstrapStartRowMap(task, table));
-		LOGGER.info(String.format("bootstrapping started for %s.%s", task.database, task.table));
-
-		try ( Connection streamingConnection = getStreamingConnection(task.database);
-			  PreparedStatement statement = prepareSelectStatement(streamingConnection, task.database, task.table, table, whereClause);
-			  ResultSet resultSet = statement.executeQuery() ) {
-			setBootstrapRowToStarted(task.id);
-			int insertedRows = 0;
-			lastInsertedRowsUpdateTimeMillis = 0; // ensure updateInsertedRowsColumn is called at least once
-			while ( resultSet.next() ) {
-				RowMap row = bootstrapEventRowMap("bootstrap-insert", table.database, table.name, table.getPKList(), task.comment);
-				setRowValues(row, resultSet, table);
-				row.setSchemaId(currentSchemaID);
-
-				if ( !Filter.includes(filter, table.database, table.name, row.getData()) )
-					continue;
-
-				Scripting scripting = context.getConfig().scripting;
-				if ( scripting != null )
-					scripting.invoke(row);
-
-				if ( LOGGER.isDebugEnabled() )
-					LOGGER.debug("bootstrapping row : {}", row.toJSON());
-
-				producer.push(row);
-				++insertedRows;
-
-				updateInsertedRowsColumn(insertedRows, task.id);
+		try ( Connection streamingConnection = getStreamingConnection(task.database) ) {
+			BootstrapWhereClause whereClause;
+			try {
+				whereClause = BootstrapWhereClause.parse(task.whereClause, table.getColumnNames(), streamingConnection);
+			} catch ( BootstrapWhereClause.InvalidWhereClauseException e ) {
+				throw new BootstrapAbortException("rejected where_clause: " + e.getMessage());
 			}
-			setBootstrapRowToCompleted(insertedRows, task.id);
+
+			producer.push(bootstrapStartRowMap(task, table));
+			LOGGER.info(String.format("bootstrapping started for %s.%s", task.database, task.table));
+
+			try ( PreparedStatement statement = prepareSelectStatement(streamingConnection, task.database, task.table, table, whereClause);
+				  ResultSet resultSet = statement.executeQuery() ) {
+				streamRows(task, producer, currentSchemaID, table, filter, resultSet);
+			}
 		} catch ( NoSuchElementException e ) {
 			LOGGER.info("bootstrapping aborted for " + task.logString());
 		}
+	}
+
+	private void streamRows(BootstrapTask task, AbstractProducer producer, Long currentSchemaID, Table table,
+							Filter filter, ResultSet resultSet) throws Exception {
+		setBootstrapRowToStarted(task.id);
+		int insertedRows = 0;
+		lastInsertedRowsUpdateTimeMillis = 0; // ensure updateInsertedRowsColumn is called at least once
+		while ( resultSet.next() ) {
+			RowMap row = bootstrapEventRowMap("bootstrap-insert", table.database, table.name, table.getPKList(), task.comment);
+			setRowValues(row, resultSet, table);
+			row.setSchemaId(currentSchemaID);
+
+			if ( !Filter.includes(filter, table.database, table.name, row.getData()) )
+				continue;
+
+			Scripting scripting = context.getConfig().scripting;
+			if ( scripting != null )
+				scripting.invoke(row);
+
+			if ( LOGGER.isDebugEnabled() )
+				LOGGER.debug("bootstrapping row : {}", row.toJSON());
+
+			producer.push(row);
+			++insertedRows;
+
+			updateInsertedRowsColumn(insertedRows, task.id);
+		}
+		setBootstrapRowToCompleted(insertedRows, task.id);
 	}
 
 	private void updateInsertedRowsColumn(int insertedRows, Long id) throws SQLException, NoSuchElementException, DuplicateProcessException {
