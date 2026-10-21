@@ -54,9 +54,9 @@ public abstract class SchemaChange {
 
 	private static final Pattern CSTYLE_COMMENTS = Pattern.compile("/\\*.*?\\*/", Pattern.DOTALL);
 
-	private static boolean matchesBlacklist(String sql, int serverVersionId) {
+	private static boolean matchesBlacklist(String sql, int serverVersionId, boolean mariaDB) {
 		// drop /*!NNNNN ... */ comments the server didn't execute, then *include* /*50032 CREATE EVENT */ style sql
-		sql = ExecutableComment.stripInactive(sql, serverVersionId);
+		sql = ExecutableComment.stripInactive(sql, serverVersionId, mariaDB);
 		sql = sql.replaceAll("/\\*M?!\\d+\\s*(.*)\\*/", "$1");
 
 		// now strip out comments
@@ -84,11 +84,11 @@ public abstract class SchemaChange {
 		return false;
 	}
 
-	private static List<SchemaChange> parseSQL(String currentDB, String sql, int serverVersionId) {
+	private static List<SchemaChange> parseSQL(String currentDB, String sql, int serverVersionId, boolean mariaDB) {
 		ANTLRInputStream input = new ANTLRInputStream(sql);
 		mysqlLexer lexer = new mysqlLexer(input);
 		lexer.removeErrorListeners();
-		lexer.setServerVersionId(serverVersionId);
+		lexer.setServerVersion(serverVersionId, mariaDB);
 
 		TokenStream tokens = new CommonTokenStream(lexer);
 
@@ -108,21 +108,22 @@ public abstract class SchemaChange {
 	}
 
 	public static List<SchemaChange> parse(String currentDB, String sql) {
-		return parse(currentDB, sql, ExecutableComment.ALL_VERSIONS);
+		return parse(currentDB, sql, ExecutableComment.ALL_VERSIONS, false);
 	}
 
 	/**
 	 * @param serverVersionId the source server's version in MySQL's {@code Mmmpp} form (e.g. 80036),
 	 *                        used to ignore {@code /*!NNNNN ... *&#47;} comments the server did not execute.
+	 * @param mariaDB whether the source server is MariaDB, which never runs MySQL-style comments numbered 50700-99999
 	 */
-	public static List<SchemaChange> parse(String currentDB, String sql, int serverVersionId) {
-		if ( matchesBlacklist(sql, serverVersionId) ) {
+	public static List<SchemaChange> parse(String currentDB, String sql, int serverVersionId, boolean mariaDB) {
+		if ( matchesBlacklist(sql, serverVersionId, mariaDB) ) {
 			return null;
 		}
 
 		while ( true ) {
 			try {
-				return parseSQL(currentDB, sql, serverVersionId);
+				return parseSQL(currentDB, sql, serverVersionId, mariaDB);
 			} catch ( ReparseSQLException e ) {
 				sql = e.getSQL();
 				LOGGER.debug("rewrote SQL to {}", sql);

@@ -12,14 +12,16 @@ import mysql_literal_tokens,
 
 @lexer::members {
 	private int serverVersionId = ExecutableComment.ALL_VERSIONS;
+	private boolean mariaDB = false;
 
-	public void setServerVersionId(int serverVersionId) {
+	public void setServerVersion(int serverVersionId, boolean mariaDB) {
 		this.serverVersionId = serverVersionId;
+		this.mariaDB = mariaDB;
 	}
 
 	/* MySQL ignores the whole body of a version-gated comment that is newer than the server. */
 	private void skipInactiveExecutableComment() {
-		if ( ExecutableComment.isActive(getText(), serverVersionId) )
+		if ( ExecutableComment.isActive(getText(), serverVersionId, mariaDB) )
 			return;
 
 		while ( _input.LA(1) != CharStream.EOF ) {

@@ -13,6 +13,10 @@ public final class ExecutableComment {
 	/** server version id that treats every executable comment as active */
 	public static final int ALL_VERSIONS = Integer.MAX_VALUE;
 
+	/* MariaDB treats MySQL-style executable comments in this range as plain comments, whatever its version */
+	private static final int MARIADB_IGNORED_MIN = 50700;
+	private static final int MARIADB_IGNORED_MAX = 99999;
+
 	private static final int OPENER_LENGTH = "/*!".length();
 	private static final Pattern VERSIONED_COMMENT = Pattern.compile("/\\*!(\\d{5,})(.*?)\\*/", Pattern.DOTALL);
 
@@ -21,25 +25,30 @@ public final class ExecutableComment {
 	/**
 	 * @param opener the comment opener as lexed, e.g. {@code /*!80016}
 	 * @param serverVersionId server version in {@code Mmmpp} form
-	 * @return whether MySQL executes the body of this comment
+	 * @param mariaDB whether the server is MariaDB
+	 * @return whether the server executes the body of this comment
 	 */
-	public static boolean isActive(String opener, int serverVersionId) {
+	public static boolean isActive(String opener, int serverVersionId, boolean mariaDB) {
 		Integer version = versionOf(opener.substring(Math.min(OPENER_LENGTH, opener.length())));
-		return version == null || version <= serverVersionId;
+		if ( version == null )
+			return true;
+		if ( mariaDB && version >= MARIADB_IGNORED_MIN && version <= MARIADB_IGNORED_MAX )
+			return false;
+		return version <= serverVersionId;
 	}
 
 	/**
 	 * Remove executable comments the server would not run, so that regex-based
 	 * statement classification sees the same statement as MySQL.
 	 */
-	public static String stripInactive(String sql, int serverVersionId) {
-		if ( serverVersionId == ALL_VERSIONS || sql.indexOf("/*!") < 0 )
+	public static String stripInactive(String sql, int serverVersionId, boolean mariaDB) {
+		if ( (serverVersionId == ALL_VERSIONS && !mariaDB) || sql.indexOf("/*!") < 0 )
 			return sql;
 
 		Matcher m = VERSIONED_COMMENT.matcher(sql);
 		StringBuffer sb = new StringBuffer();
 		while ( m.find() ) {
-			String replacement = isActive("/*!" + m.group(1), serverVersionId) ? m.group() : " ";
+			String replacement = isActive("/*!" + m.group(1), serverVersionId, mariaDB) ? m.group() : " ";
 			m.appendReplacement(sb, Matcher.quoteReplacement(replacement));
 		}
 		m.appendTail(sb);

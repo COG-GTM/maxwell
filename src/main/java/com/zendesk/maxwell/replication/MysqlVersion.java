@@ -45,7 +45,10 @@ public class MysqlVersion {
 		DatabaseMetaData meta = c.getMetaData();
 		int major = meta.getDatabaseMajorVersion();
 		int minor = meta.getDatabaseMinorVersion();
-		return new MysqlVersion(major, minor, parseVersionId(meta.getDatabaseProductVersion(), major, minor));
+		String productVersion = meta.getDatabaseProductVersion();
+		MysqlVersion version = new MysqlVersion(major, minor, parseVersionId(productVersion, major, minor));
+		version.isMariaDB = productVersion != null && productVersion.toLowerCase().contains("mariadb");
+		return version;
 	}
 
 	/**
