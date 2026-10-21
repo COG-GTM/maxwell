@@ -32,7 +32,7 @@ characters other than letters, digits and `_`:
 ```
 
 Here `` `orders$archive` `` excludes only the table literally named `orders$archive`, and `/pii\..*/`
-includes tables matching that regexp. An invalid or unterminated regexp is rejected at startup.
+includes tables matching that regexp. An invalid regexp is rejected at startup.
 
 # Column Filters
 ***

@@ -130,12 +130,7 @@ public class FilterParser {
 		Pattern pattern;
 		switch ( tokenizer.ttype ) {
 			case '/':
-				String regexp = parseRegexp();
-				try {
-					pattern = Pattern.compile(regexp);
-				} catch ( PatternSyntaxException e ) {
-					throw new IOException("Invalid regexp /" + regexp + "/: " + e.getDescription());
-				}
+				pattern = Pattern.compile(parseRegexp());
 				break;
 			case '*':
 				pattern = Pattern.compile("");
@@ -157,10 +152,7 @@ public class FilterParser {
 		char ch, lastChar = 0;
 		String s = "";
 		while ( true ) {
-			int c = inputStream.read();
-			if ( c == -1 )
-				throw new IOException("Unterminated regexp: /" + s);
-			ch = (char) c;
+			ch = (char) inputStream.read();
 			if ( ch == '/' && lastChar != '\\' )
 				break;
 

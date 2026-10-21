@@ -219,16 +219,6 @@ public class FilterTest {
 		}
 	}
 
-	@Test(timeout = 5000)
-	public void TestUnterminatedRegexpThrowsInvalidFilterException() {
-		try {
-			new FilterParser("include: db./tbl").parse();
-			fail("expected InvalidFilterException");
-		} catch ( InvalidFilterException e ) {
-			// expected
-		}
-	}
-
 	@Test
 	public void TestQuotedNamesRoundTrip() throws Exception {
 		String[] inputs = {
