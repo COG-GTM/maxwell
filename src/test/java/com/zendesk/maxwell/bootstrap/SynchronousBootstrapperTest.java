@@ -2,14 +2,19 @@ package com.zendesk.maxwell.bootstrap;
 
 import com.zendesk.maxwell.schema.Table;
 import com.zendesk.maxwell.schema.columndef.ColumnDef;
+import com.zendesk.maxwell.filtering.Filter;
 import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import static org.hamcrest.CoreMatchers.is;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
 
 public class SynchronousBootstrapperTest {
 	private Table tableWithPK(List<String> pkList) {
@@ -42,23 +47,45 @@ public class SynchronousBootstrapperTest {
 	}
 
 	@Test
-	public void testWhereClauseIsPassedThroughAheadOfOrderBy() {
+	public void testWhereClauseIsParameterizedAheadOfOrderBy() throws Exception {
 		Table table = tableWithPK(Arrays.asList("domain", "key"));
+		BootstrapWhereClause where = BootstrapWhereClause.parse("domain > 'a'", table.getColumnNames());
 
 		assertThat(
-			SynchronousBootstrapper.buildSelectSQL("shard_1", "reserved_pk_test", table, "id > 1"),
-			is("select * from `shard_1`.`reserved_pk_test` where id > 1 order by `domain`,`key`")
+			SynchronousBootstrapper.buildSelectSQL("shard_1", "reserved_pk_test", table, where),
+			is("select * from `shard_1`.`reserved_pk_test` where (`domain` > ?) order by `domain`,`key`")
+		);
+		assertThat(where.getParams(), is(Arrays.<Object>asList("a")));
+	}
+
+	@Test
+	public void testEmptyWhereClauseIsIgnored() throws Exception {
+		Table table = tableWithPK(Arrays.asList("domain"));
+
+		assertThat(
+			SynchronousBootstrapper.buildSelectSQL("shard_1", "reserved_pk_test", table, BootstrapWhereClause.parse("", table.getColumnNames())),
+			is("select * from `shard_1`.`reserved_pk_test` order by `domain`")
 		);
 	}
 
 	@Test
-	public void testEmptyWhereClauseIsIgnored() {
-		Table table = tableWithPK(Arrays.asList("domain"));
+	public void testTableFilterIsApplied() throws Exception {
+		Filter filter = new Filter("exclude: secret.*, blacklist: shard_1.hidden");
+		Set<String> columns = new HashSet<>(Arrays.asList("id"));
 
-		assertThat(
-			SynchronousBootstrapper.buildSelectSQL("shard_1", "reserved_pk_test", table, ""),
-			is("select * from `shard_1`.`reserved_pk_test` order by `domain`")
-		);
+		assertTrue(SynchronousBootstrapper.isTableIncluded(filter, "shard_1", "minimal", columns));
+		assertTrue(SynchronousBootstrapper.isTableIncluded(null, "shard_1", "minimal", columns));
+		assertFalse(SynchronousBootstrapper.isTableIncluded(filter, "secret", "users", columns));
+		assertFalse(SynchronousBootstrapper.isTableIncluded(filter, "shard_1", "hidden", columns));
+		assertFalse(SynchronousBootstrapper.isTableIncluded(null, "mysql", "ha_health_check", columns));
+	}
+
+	@Test
+	public void testColumnFilterCanReincludeTable() throws Exception {
+		Filter filter = new Filter("exclude: shard_1.*, include: shard_1.minimal.account_id=1");
+
+		assertTrue(SynchronousBootstrapper.isTableIncluded(filter, "shard_1", "minimal", new HashSet<>(Arrays.asList("id", "account_id"))));
+		assertFalse(SynchronousBootstrapper.isTableIncluded(filter, "shard_1", "other", new HashSet<>(Arrays.asList("id"))));
 	}
 
 	@Test

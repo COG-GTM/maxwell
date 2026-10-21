@@ -3,7 +3,9 @@ package com.zendesk.maxwell.bootstrap;
 import com.zendesk.maxwell.CaseSensitivity;
 import com.zendesk.maxwell.MaxwellMysqlStatus;
 import com.zendesk.maxwell.errors.DuplicateProcessException;
+import com.zendesk.maxwell.filtering.Filter;
 import com.zendesk.maxwell.producer.MaxwellOutputConfig;
+import com.zendesk.maxwell.MaxwellConfig;
 import com.zendesk.maxwell.MaxwellContext;
 import com.zendesk.maxwell.producer.AbstractProducer;
 import com.zendesk.maxwell.row.RowMap;
@@ -26,6 +28,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -112,20 +115,38 @@ public class SynchronousBootstrapper {
 			LOGGER.debug("bootstrapping requested for {}", task.logString());
 		}
 
+		Filter filter = context.getFilter();
+		if ( !isTableIncluded(filter, task.database, task.table, null) )
+			throw new BootstrapAbortException(String.format("%s.%s is excluded by the configured filter", task.database, task.table));
+
 		Table table = getTableForTask(task);
+
+		if ( !isTableIncluded(filter, table.database, table.name, table.getColumnNames()) )
+			throw new BootstrapAbortException(String.format("%s.%s is excluded by the configured filter", table.database, table.name));
+
+		BootstrapWhereClause whereClause;
+		try {
+			whereClause = BootstrapWhereClause.parse(task.whereClause, table.getColumnNames());
+		} catch ( BootstrapWhereClause.InvalidWhereClauseException e ) {
+			throw new BootstrapAbortException("rejected where_clause: " + e.getMessage());
+		}
 
 		producer.push(bootstrapStartRowMap(task, table));
 		LOGGER.info(String.format("bootstrapping started for %s.%s", task.database, task.table));
 
-		try ( Connection streamingConnection = getStreamingConnection(task.database)) {
+		try ( Connection streamingConnection = getStreamingConnection(task.database);
+			  PreparedStatement statement = prepareSelectStatement(streamingConnection, task.database, task.table, table, whereClause);
+			  ResultSet resultSet = statement.executeQuery() ) {
 			setBootstrapRowToStarted(task.id);
-			ResultSet resultSet = getAllRows(task.database, task.table, table, task.whereClause, streamingConnection);
 			int insertedRows = 0;
 			lastInsertedRowsUpdateTimeMillis = 0; // ensure updateInsertedRowsColumn is called at least once
 			while ( resultSet.next() ) {
 				RowMap row = bootstrapEventRowMap("bootstrap-insert", table.database, table.name, table.getPKList(), task.comment);
 				setRowValues(row, resultSet, table);
 				row.setSchemaId(currentSchemaID);
+
+				if ( !Filter.includes(filter, table.database, table.name, row.getData()) )
+					continue;
 
 				Scripting scripting = context.getConfig().scripting;
 				if ( scripting != null )
@@ -167,8 +188,37 @@ public class SynchronousBootstrapper {
 		return conn;
 	}
 
+	/**
+	 * Apply the same table-level filtering the binlog replicator applies, so that
+	 * excluded or blacklisted tables can't be pulled into the stream via a bootstrap.
+	 *
+	 * @param filter      the configured filter, may be null
+	 * @param database    database name
+	 * @param table       table name
+	 * @param columnNames the table's columns, or null if not yet known
+	 * @return whether rows of this table may be bootstrapped
+	 */
+	static boolean isTableIncluded(Filter filter, String database, String table, Set<String> columnNames) {
+		if ( Filter.isSystemBlacklisted(database, table) )
+			return false;
+
+		if ( Filter.includes(filter, database, table) )
+			return true;
+
+		return columnNames == null || Filter.couldIncludeFromColumnFilters(filter, database, table, columnNames);
+	}
+
 	private Connection getStreamingConnection(String databaseName) throws SQLException, URISyntaxException {
-		Connection conn = DriverManager.getConnection(context.getConfig().replicationMysql.getConnectionURI(false), context.getConfig().replicationMysql.user, context.getConfig().replicationMysql.password);
+		MaxwellConfig config = context.getConfig();
+		String user = config.replicationMysql.user;
+		String password = config.replicationMysql.password;
+
+		if ( config.bootstrapperUser != null ) {
+			user = config.bootstrapperUser;
+			password = config.bootstrapperPassword;
+		}
+
+		Connection conn = DriverManager.getConnection(config.replicationMysql.getConnectionURI(false), user, password);
 		conn.setCatalog(databaseName);
 		return conn;
 	}
@@ -201,10 +251,17 @@ public class SynchronousBootstrapper {
 		LOGGER.info("bootstrapping ended for " + task.logString());
 	}
 
-	private ResultSet getAllRows(String databaseName, String tableName, Table table, String whereClause,
-								 Connection connection) throws SQLException {
-		Statement statement = createBatchStatement(connection);
-		return statement.executeQuery(buildSelectSQL(databaseName, tableName, table, whereClause));
+	private PreparedStatement prepareSelectStatement(Connection connection, String databaseName, String tableName,
+													 Table table, BootstrapWhereClause whereClause) throws SQLException {
+		PreparedStatement statement = connection.prepareStatement(
+			buildSelectSQL(databaseName, tableName, table, whereClause),
+			ResultSet.TYPE_FORWARD_ONLY,
+			ResultSet.CONCUR_READ_ONLY
+		);
+		statement.setFetchSize(Integer.MIN_VALUE);
+		if ( whereClause != null )
+			whereClause.bind(statement, 1);
+		return statement;
 	}
 
 	/**
@@ -212,20 +269,21 @@ public class SynchronousBootstrapper {
 	 *
 	 * All identifiers are quoted, so that tables and columns named after reserved
 	 * words (a primary key column called `key`, say) don't produce a syntax error.
-	 * The where clause is user-supplied SQL and is passed through untouched.
+	 * The where clause has already been validated by {@link BootstrapWhereClause};
+	 * its literals are `?` placeholders bound by the caller.
 	 *
 	 * @param databaseName the database to bootstrap from
 	 * @param tableName the table to bootstrap
 	 * @param table the captured schema for that table, used for the primary key
-	 * @param whereClause optional user-supplied filter, may be null
+	 * @param whereClause optional parsed filter, may be null
 	 * @return the select statement to execute
 	 */
-	static String buildSelectSQL(String databaseName, String tableName, Table table, String whereClause) {
+	static String buildSelectSQL(String databaseName, String tableName, Table table, BootstrapWhereClause whereClause) {
 		String sql = "select * from "
 			+ Sql.quoteIdentifier(databaseName) + "." + Sql.quoteIdentifier(tableName);
 
-		if ( whereClause != null && !whereClause.equals("") ) {
-			sql += String.format(" where %s", whereClause);
+		if ( whereClause != null ) {
+			sql += " where " + whereClause.getSQL();
 		}
 
 		List<String> pkList = table.getPKList();
@@ -237,12 +295,6 @@ public class SynchronousBootstrapper {
 		}
 
 		return sql;
-	}
-
-	private Statement createBatchStatement(Connection connection) throws SQLException {
-		Statement statement = connection.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
-		statement.setFetchSize(Integer.MIN_VALUE);
-		return statement;
 	}
 
 	private final String startBootstrapSQL = "update `bootstrap` set started_at=NOW() where id=?";

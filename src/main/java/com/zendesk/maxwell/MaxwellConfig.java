@@ -155,6 +155,16 @@ public class MaxwellConfig extends AbstractConfig {
 	public String bootstrapperType;
 
 	/**
+	 * optional least-privilege mysql user for the bootstrap select; defaults to the replication user
+	 */
+	public String bootstrapperUser;
+
+	/**
+	 * password for {@link #bootstrapperUser}
+	 */
+	public String bootstrapperPassword;
+
+	/**
 	 * size of queue for buffered producer
 	 */
 	public int bufferedProducerSize;
@@ -824,6 +834,10 @@ public class MaxwellConfig extends AbstractConfig {
 
 		parser.accepts( "bootstrapper", "bootstrapper type: async|sync|none. default: async" )
 				.withRequiredArg();
+		parser.accepts( "bootstrapper_user", "mysql user for bootstrap queries, should only have SELECT on the replicated schemas. default: replication user" )
+				.withRequiredArg();
+		parser.accepts( "bootstrapper_password", "password for bootstrapper_user" )
+				.withRequiredArg();
 		parser.accepts( "init_position", "initial binlog position, given as BINLOG_FILE:POSITION[:HEARTBEAT]" )
 				.withRequiredArg();
 
@@ -1082,6 +1096,8 @@ public class MaxwellConfig extends AbstractConfig {
 		this.producerType       = fetchStringOption("producer", options, properties, "stdout");
 		this.producerAckTimeout = fetchLongOption("producer_ack_timeout", options, properties, 0L);
 		this.bootstrapperType   = fetchStringOption("bootstrapper", options, properties, "async");
+		this.bootstrapperUser     = fetchStringOption("bootstrapper_user", options, properties, null);
+		this.bootstrapperPassword = fetchStringOption("bootstrapper_password", options, properties, null);
 		this.clientID           = fetchStringOption("client_id", options, properties, "maxwell");
 		this.replicaServerID    = fetchLongOption("replica_server_id", options, properties, 6379L);
 		this.javascriptFile         = fetchStringOption("javascript", options, properties, null);
@@ -1412,6 +1428,10 @@ public class MaxwellConfig extends AbstractConfig {
 				&& !this.bootstrapperType.equals("sync")
 				&& !this.bootstrapperType.equals("none") ) {
 			usageForOptions("please specify --bootstrapper=async|sync|none", "--bootstrapper");
+		}
+
+		if ( this.bootstrapperPassword != null && this.bootstrapperUser == null ) {
+			usageForOptions("bootstrapper_password requires bootstrapper_user", "--bootstrapper");
 		}
 
 		if (this.maxwellMysql.sslMode == null) {

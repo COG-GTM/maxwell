@@ -35,6 +35,19 @@ Optionally, you can include a where clause to replay part of the data.
 bin/maxwell-bootstrap --database fooDB --table barTable --where "my_date >= '2017-01-07 00:00:00'"
 ```
 
+The where clause is not passed to mysql verbatim. It must be a simple boolean
+expression over the table's own columns, and its literals are sent as bound
+parameters. Supported syntax:
+
+- column references (optionally `` `quoted` ``) belonging to the bootstrapped table
+- string, numeric, `NULL`, `TRUE` and `FALSE` literals
+- `=`, `<=>`, `<>`, `!=`, `<`, `<=`, `>`, `>=`
+- `IS [NOT] NULL|TRUE|FALSE|UNKNOWN`, `[NOT] IN (...)`, `[NOT] BETWEEN ... AND ...`, `[NOT] LIKE ... [ESCAPE '...']`
+- `AND`, `OR`, `NOT` and parentheses
+
+Function calls, subqueries, `UNION`, qualified names, variables, comments and
+`;` are rejected, and the bootstrap is marked complete with 0 rows.
+
 Alternatively you can insert a row in the `maxwell.bootstrap` table to trigger a bootstrap.
 
 ```
@@ -45,6 +58,20 @@ Note that if a Maxwell client_id has been set you should specify the client id.
 ```
 mysql> insert into maxwell.bootstrap (database_name, table_name, client_id) values ('fooDB', 'barTable', 'custom_maxwell_client_id');
 ```
+
+### Security considerations
+
+Bootstrap queries run with the replication account (or `bootstrapper_user` if
+set), and their results are written to your producer. Treat `INSERT` on
+`maxwell.bootstrap` as roughly equivalent to read access on every table that
+account can see, and only grant it to principals trusted with that data.
+
+To limit exposure:
+
+- tables excluded or blacklisted by your [filter](/filtering) are never
+  bootstrapped, and value filters are applied to every `bootstrap-insert` row
+- set `bootstrapper_user` / `bootstrapper_password` to a mysql account that only
+  has `SELECT` on the schemas you replicate
 
 You can schedule bootstrap tasks to be run in the future by setting the started_at column. Maxwell will wait until this time to start the bootstrap.
 
