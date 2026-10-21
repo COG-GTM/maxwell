@@ -536,8 +536,17 @@ public class BinlogConnectorReplicator extends RunLoopProcess implements Replica
 	 */
 
 	private RowMapBuffer getTransactionRows(BinlogConnectorEvent beginEvent) throws Exception {
-		BinlogConnectorEvent event;
 		RowMapBuffer buffer = new RowMapBuffer(MAX_TX_ELEMENTS, this.bufferMemoryUsage);
+		try {
+			return readTransactionRows(beginEvent, buffer);
+		} catch ( Throwable t ) {
+			buffer.close();
+			throw t;
+		}
+	}
+
+	private RowMapBuffer readTransactionRows(BinlogConnectorEvent beginEvent, RowMapBuffer buffer) throws Exception {
+		BinlogConnectorEvent event;
 
 		String currentQuery = null;
 
@@ -628,6 +637,7 @@ public class BinlogConnectorReplicator extends RunLoopProcess implements Replica
 						// MariaDB injected event
 					} else if ( upperCaseSql.equals("ROLLBACK") ) {
 						LOGGER.debug("rolling back transaction inside binlog.");
+						buffer.close();
 						return new RowMapBuffer(0);
 					} else {
 						LOGGER.warn("Unhandled QueryEvent @ {} inside transaction: {}", event.getPosition().fullPosition(), qe);
