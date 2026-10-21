@@ -130,6 +130,13 @@ public class MaxwellConfig extends AbstractConfig {
 	public String kafkaTopic;
 
 	/**
+	 * Reversibly escape %{database}/%{table}/%{type} values substituted into topic, key, subject and
+	 * ordering-key templates so that distinct rows can never produce the same name.
+	 * @see com.zendesk.maxwell.util.TopicInterpolator
+	 */
+	public boolean topicEscapeIdentifiers;
+
+	/**
 	 * Kafka topic to send undeliverable rows to
 	 */
 	public String deadLetterTopic;
@@ -869,6 +876,8 @@ public class MaxwellConfig extends AbstractConfig {
 				.withRequiredArg();
 		parser.accepts( "producer_ack_timeout", "producer message acknowledgement timeout in milliseconds" )
 				.withRequiredArg().ofType(Long.class);
+		parser.accepts( "topic_escape_identifiers", "escape separator characters in %{database}/%{table}/%{type} topic substitutions so distinct tables never share a topic/key/subject. default: false" )
+				.withOptionalArg().ofType(Boolean.class);
 
 		parser.separator();
 
@@ -912,6 +921,7 @@ public class MaxwellConfig extends AbstractConfig {
 		parser.addToSection("producer_partition_columns");
 		parser.addToSection("producer_partition_by_fallback");
 		parser.addToSection("producer_ack_timeout");
+		parser.addToSection("topic_escape_identifiers");
 
 		parser.section( "nats" );
 
@@ -1168,6 +1178,7 @@ public class MaxwellConfig extends AbstractConfig {
 		this.producerPartitionKey = fetchStringOption("producer_partition_by", options, properties, "database");
 		this.producerPartitionColumns = fetchStringOption("producer_partition_columns", options, properties, null);
 		this.producerPartitionFallback = fetchStringOption("producer_partition_by_fallback", options, properties, null);
+		this.topicEscapeIdentifiers = fetchBooleanOption("topic_escape_identifiers", options, properties, false);
 
 		this.kinesisStream  = fetchStringOption("kinesis_stream", options, properties, null);
 		this.kinesisMd5Keys = fetchBooleanOption("kinesis_md5_keys", options, properties, false);

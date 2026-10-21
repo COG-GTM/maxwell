@@ -203,7 +203,7 @@ class MaxwellPubsubProducerWorker
 
     this.messageOrderingKeyInterpolator = pubsubMessageOrderingKey == null
       ? null
-      : new TopicInterpolator(pubsubMessageOrderingKey);
+      : new TopicInterpolator(pubsubMessageOrderingKey, context.getConfig().topicEscapeIdentifiers);
 
     Metrics metrics = context.getMetrics();
 

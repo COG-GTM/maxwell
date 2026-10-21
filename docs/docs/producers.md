@@ -357,5 +357,29 @@ Topic substituion is available in the following producers:
 - Kakfa, for topics
 - Redis, for channels
 - Nats, for subject heirarchies
+- Pub/Sub, for message ordering keys
+
+Values are substituted as-is (Nats and Pub/Sub replace non-alphanumeric
+characters with `_`), so different rows can end up with the same name. With
+`namespace_%{database}_%{table}`, for example, table `eu_orders` in database
+`shop` and table `orders` in database `shop_eu` both write to
+`namespace_shop_eu_orders`. If one database's owner must not be able to publish
+into another's topic, set `topic_escape_identifiers=true`. This encodes values
+reversibly: each character of a value that also appears as a separator in the
+template is written as an escape character followed by the hex code of its
+UTF-8 bytes. The escape character is the first of `-`, `_`, `.` that the
+template does not use. On Nats and Pub/Sub every non-alphanumeric character is
+escaped. With that setting the two tables above go to
+`namespace_shop-5Feu_orders` and `namespace_shop_eu-5Forders`. Names that
+contain no separator characters are unchanged. Maxwell refuses to start if a
+placeholder is followed directly by another placeholder or by a letter or digit,
+or if the template uses all three escape candidates.
+
+Enabling `topic_escape_identifiers` renames the topics of any table whose
+database or table name contains one of the template's separators.
+
+Whichever setting you use, consumers that need to know where a row came from
+should read the `database` and `table` fields of the message payload, not the
+topic, channel or key name.
 
 

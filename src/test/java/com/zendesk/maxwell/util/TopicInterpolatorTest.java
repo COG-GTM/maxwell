@@ -10,6 +10,8 @@ import java.util.Collections;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.IsEqual.equalTo;
+import static org.hamcrest.core.IsNot.not;
+import static org.junit.Assert.assertThrows;
 
 public class TopicInterpolatorTest {
 
@@ -141,6 +143,95 @@ public class TopicInterpolatorTest {
 		TopicInterpolator topicInterpolator = new TopicInterpolator(DATABASE_TABLE_TYPE_TEMPLATE);
 
 		assertThat(topicInterpolator.interpolate("&test Db.db!", "&test Table.table!", "&insert t.table!", false), equalTo("&test Db.db!.&test Table.table!.&insert t.table!"));
+	}
+
+	@Test
+	public void substitutedValuesCannotInjectPlaceholders() {
+		TopicInterpolator raw = new TopicInterpolator("ns_%{database}_%{table}");
+		assertThat(raw.interpolate("%{table}", "orders", null, false), equalTo("ns_%{table}_orders"));
+		assertThat(raw.interpolate("%{type}", "orders", "insert", false), equalTo("ns_%{type}_orders"));
+
+		TopicInterpolator escaped = new TopicInterpolator("ns_%{database}_%{table}", true);
+		assertThat(escaped.interpolate("%{table}", "orders", null, false), equalTo("ns_%{table}_orders"));
+	}
+
+	@Test
+	public void regexReplacementCharactersAreSubstitutedLiterally() {
+		TopicInterpolator topicInterpolator = new TopicInterpolator(DATABASE_TABLE_TEMPLATE);
+
+		assertThat(topicInterpolator.interpolate("db$1", "t\\able$", null, false), equalTo("db$1.t\\able$"));
+	}
+
+	@Test
+	public void legacyModeKeepsExistingNames() {
+		TopicInterpolator topicInterpolator = new TopicInterpolator("namespace_%{database}_%{table}");
+
+		assertThat(topicInterpolator.interpolate("shop_eu", "orders", null, false), equalTo("namespace_shop_eu_orders"));
+		assertThat(topicInterpolator.interpolate("shop", "eu_orders", null, false), equalTo("namespace_shop_eu_orders"));
+	}
+
+	@Test
+	public void escapingSeparatesTenantsSharingAPrefix() {
+		TopicInterpolator topicInterpolator = new TopicInterpolator("namespace_%{database}_%{table}", true);
+
+		String victim = topicInterpolator.interpolate("shop_eu", "orders", null, false);
+		String attacker = topicInterpolator.interpolate("shop", "eu_orders", null, false);
+
+		assertThat(victim, equalTo("namespace_shop-5Feu_orders"));
+		assertThat(attacker, equalTo("namespace_shop_eu-5Forders"));
+		assertThat(attacker, not(equalTo(victim)));
+	}
+
+	@Test
+	public void escapingLeavesNamesWithoutSeparatorsUnchanged() {
+		TopicInterpolator dotted = new TopicInterpolator("maxwell.%{database}.%{table}", true);
+		assertThat(dotted.interpolate("shop_eu", "order_items", null, false), equalTo("maxwell.shop_eu.order_items"));
+		assertThat(dotted.interpolate("a.b", "c", null, false), equalTo("maxwell.a-2Eb.c"));
+		assertThat(dotted.interpolate("a", "b.c", null, false), equalTo("maxwell.a.b-2Ec"));
+		assertThat(dotted.interpolate("a-b", "c", null, false), equalTo("maxwell.a-2Db.c"));
+	}
+
+	@Test
+	public void escapeCharacterIsChosenFromCharactersNotInTheTemplate() {
+		TopicInterpolator dashed = new TopicInterpolator("mx-%{database}-%{table}", true);
+		assertThat(dashed.interpolate("my-db", "order_items", null, false), equalTo("mx-my_2Ddb-order_5Fitems"));
+		assertThat(dashed.interpolate("my", "db-order_items", null, false), equalTo("mx-my-db_2Dorder_5Fitems"));
+
+		TopicInterpolator dashedUnderscored = new TopicInterpolator("mx-%{database}_%{table}", true);
+		assertThat(dashedUnderscored.interpolate("a_b", "c-d.e", null, false), equalTo("mx-a.5Fb_c.2Dd.2Ee"));
+	}
+
+	@Test
+	public void escapingCleanUpModeIsReversible() {
+		TopicInterpolator topicInterpolator = new TopicInterpolator(DATABASE_TABLE_TYPE_TEMPLATE, true);
+
+		assertThat(topicInterpolator.interpolate("a.b", "c", "insert", true), equalTo("a-2Eb.c.insert"));
+		assertThat(topicInterpolator.interpolate("a_b", "c", "insert", true), equalTo("a-5Fb.c.insert"));
+		assertThat(topicInterpolator.interpolate("a b", "c", "insert", true), equalTo("a-20b.c.insert"));
+		assertThat(topicInterpolator.interpolate("caf\u00e9", "c", "insert", true), equalTo("caf-C3-A9.c.insert"));
+		assertThat(topicInterpolator.interpolate("a", "b", "insert", true), equalTo("a.b.insert"));
+	}
+
+	@Test
+	public void escapingCleanUpModeStripsTemplateWhitespace() {
+		TopicInterpolator topicInterpolator = new TopicInterpolator("  %{database} .  %{table} \n", true);
+
+		assertThat(topicInterpolator.generateFromRowMapAndCleanUpIllegalCharacters(newRowMap()), equalTo("testDb.testTable"));
+	}
+
+	@Test
+	public void escapingRejectsTemplatesThatCannotBeMadeUnambiguous() {
+		assertThrows(IllegalArgumentException.class, () -> new TopicInterpolator("%{database}%{table}", true));
+		assertThrows(IllegalArgumentException.class, () -> new TopicInterpolator("%{database}x%{table}", true));
+		assertThrows(IllegalArgumentException.class, () -> new TopicInterpolator("a-b_c.%{database}", true));
+
+		TopicInterpolator onlyAdjacentAfterCleanUp = new TopicInterpolator("%{database} %{table}", true);
+		assertThat(onlyAdjacentAfterCleanUp.interpolate("a", "b", null, false), equalTo("a b"));
+		assertThrows(IllegalArgumentException.class, () -> onlyAdjacentAfterCleanUp.interpolate("a", "b", null, true));
+
+		new TopicInterpolator("%{database}%{table}");
+		new TopicInterpolator("a-b_c.%{database}");
+		new TopicInterpolator("plain-topic_name.v1", true);
 	}
 
 	private RowIdentity newRowIdentity() {

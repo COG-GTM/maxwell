@@ -150,6 +150,7 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 	private String deadLetterTopic;
 	private final ConcurrentLinkedQueue<Pair<ProducerRecord<String, String>, KafkaCallback>> deadLetterQueue;
 	private final TopicInterpolator topicInterpolator;
+	private final boolean escapeTopicIdentifiers;
 
 	public static MaxwellKafkaPartitioner makeDDLPartitioner(String partitionHashFunc, String partitionKey) {
 		if (partitionKey.equals("table")) {
@@ -169,7 +170,8 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 			this.topic = kafkaTopic;
 		}
 
-		this.topicInterpolator = new TopicInterpolator(this.topic);
+		this.escapeTopicIdentifiers = context.getConfig().topicEscapeIdentifiers;
+		this.topicInterpolator = new TopicInterpolator(this.topic, this.escapeTopicIdentifiers);
 		this.kafka = producer;
 
 		String hash = context.getConfig().kafkaPartitionHash;
@@ -288,7 +290,7 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 	ProducerRecord<String, String> makeFallbackRecord(String fallbackTopic, final RowIdentity pk, Exception reason) throws Exception {
 		String key = pk.toKeyJson(keyFormat);
 		String value = pk.toFallbackValueWithReason(reason.getClass().getSimpleName());
-		String topic = new TopicInterpolator(fallbackTopic).generateFromRowIdentity(pk) ;
+		String topic = new TopicInterpolator(fallbackTopic, this.escapeTopicIdentifiers).generateFromRowIdentity(pk);
 		return new ProducerRecord<>(topic, key, value);
 	}
 

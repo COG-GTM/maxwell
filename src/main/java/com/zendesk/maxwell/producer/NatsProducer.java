@@ -18,7 +18,7 @@ public class NatsProducer extends AbstractProducer {
 
 	private final Logger LOGGER = LoggerFactory.getLogger(NatsProducer.class);
 	private final Connection natsConnection;
-	private final String natsSubjectTemplate;
+	private final TopicInterpolator natsSubjectInterpolator;
 
 	public NatsProducer(MaxwellContext context) {
 		super(context);
@@ -27,7 +27,7 @@ public class NatsProducer extends AbstractProducer {
 		urls.forEach(optionBuilder::server);
 		Options option = optionBuilder.build();
 
-		this.natsSubjectTemplate = context.getConfig().natsSubject;
+		this.natsSubjectInterpolator = new TopicInterpolator(context.getConfig().natsSubject, context.getConfig().topicEscapeIdentifiers);
 
 		try {
 			this.natsConnection = Nats.connect(option);
@@ -44,7 +44,7 @@ public class NatsProducer extends AbstractProducer {
 		}
 
 		String value = r.toJSON(outputConfig);
-		String natsSubject = new TopicInterpolator(this.natsSubjectTemplate).generateFromRowMapAndCleanUpIllegalCharacters(r);
+		String natsSubject = this.natsSubjectInterpolator.generateFromRowMapAndCleanUpIllegalCharacters(r);
 
 		long maxPayloadSize = natsConnection.getMaxPayload();
 		byte[] messageBytes = value.getBytes(StandardCharsets.UTF_8);

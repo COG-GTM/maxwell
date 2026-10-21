@@ -37,7 +37,7 @@ public class MaxwellRedisProducer extends AbstractProducer implements StoppableT
 		super(context);
 
 		this.channel = context.getConfig().redisKey;
-		this.topicInterpolator = new TopicInterpolator(channel);
+		this.topicInterpolator = new TopicInterpolator(channel, context.getConfig().topicEscapeIdentifiers);
 		this.redisType = context.getConfig().redisType;
 
 		String redisSentinelName = context.getConfig().redisSentinelMasterName;
