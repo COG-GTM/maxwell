@@ -226,6 +226,13 @@ public abstract class AbstractConfig {
 		return config;
 	}
 
+	protected void warnOnInsecurePublicKeyRetrieval(String prefix, MaxwellMysqlConfig config) {
+		if ( config.hasInsecurePublicKeyRetrieval() ) {
+			LOGGER.warn("{}jdbc_options sets allowPublicKeyRetrieval=true without {}ssl=REQUIRED|VERIFY_CA|VERIFY_IDENTITY; "
+				+ "a man-in-the-middle can recover the mysql password. Prefer TLS or serverRSAPublicKeyFile.", prefix, prefix);
+		}
+	}
+
 	private SSLMode getSslModeFromString(String sslMode) {
 		if (sslMode != null) {
 			for (SSLMode mode : SSLMode.values()) {

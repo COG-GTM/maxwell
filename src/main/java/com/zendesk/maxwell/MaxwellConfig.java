@@ -1471,6 +1471,10 @@ public class MaxwellConfig extends AbstractConfig {
 			this.schemaMysql.sslMode = this.maxwellMysql.sslMode;
 		}
 
+		warnOnInsecurePublicKeyRetrieval("", this.maxwellMysql);
+		warnOnInsecurePublicKeyRetrieval("replication_", this.replicationMysql);
+		warnOnInsecurePublicKeyRetrieval("schema_", this.schemaMysql);
+
 
 		if ( this.metricsDatadogType.contains("http") && StringUtils.isEmpty(this.metricsDatadogAPIKey) ) {
 			usageForOptions("please specify metrics_datadog_apikey when metrics_datadog_type = http");

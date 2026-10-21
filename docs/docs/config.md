@@ -21,7 +21,7 @@ user                           | STRING               | mysql username          
 password                       | STRING               | mysql password                                      | (no password)
 port                           | INT                  | mysql port                                          | 3306
 jdbc_options                   | STRING               | mysql jdbc connection options                       | [DEFAULT_JDBC_OPTS](#jdbcopts)
-ssl                            | [SSL_OPT](#sslopt)   | SSL behavior for mysql cx                           | DISABLED
+ssl                            | [SSL_OPT](#sslopt)   | SSL behavior for mysql cx. See [caching_sha2_password](#caching_sha2) | DISABLED
 schema_database                | STRING               | database to store schema and position in            | maxwell
 client_id                      | STRING               | unique text identifier for maxwell instance         | maxwell
 replica_server_id              | LONG                 | unique numeric identifier for this maxwell instance | 6379 (see [notes](#multiple-maxwell-instances))
@@ -264,6 +264,16 @@ PRODUCER_TYPE: [ stdout &#124; file &#124; kafka &#124; kinesis &#124; pubsub &#
 </p>
 <p id="jdbcopts" class="jumptarget">
 DEFAULT_JDBC_OPTS: zeroDateTimeBehavior=convertToNull&amp;connectTimeout=5000
+</p>
+<p id="caching_sha2" class="jumptarget">
+CACHING_SHA2_PASSWORD: Maxwell does not set <code>allowPublicKeyRetrieval=true</code>. With MySQL 8's default
+<code>caching_sha2_password</code> (or <code>sha256_password</code>) plugin on a non-TLS connection, that option
+makes the driver encrypt the password with whatever RSA key the server sends back, so a man-in-the-middle can recover
+the password. Use <code>ssl=REQUIRED</code> (or VERIFY_CA / VERIFY_IDENTITY), or pin the server key with
+<code>jdbc_options=serverRSAPublicKeyFile=/path/to/public_key.pem</code>. Only add
+<code>allowPublicKeyRetrieval=true</code> to <code>jdbc_options</code> on a trusted network; Maxwell logs a warning
+if it is set without required SSL. <code>maxwell-bootstrap</code> does not apply the <code>ssl</code> setting to its
+own connections, so it warns whenever the option is set.
 </p>
 <p id="partition_by" class="jumptarget">
 PARTITION_BY: [ database &#124; table &#124; primary_key &#124; transaction_id &#124; column &#124; random ]
