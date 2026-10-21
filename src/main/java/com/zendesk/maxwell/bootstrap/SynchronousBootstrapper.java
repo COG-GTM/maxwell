@@ -79,18 +79,15 @@ public class SynchronousBootstrapper {
 	}
 
 	/**
-	 * Give up on a task that keeps failing: emit bootstrap-complete so consumers
-	 * see the (possibly partial) bootstrap terminated, then mark the task complete
-	 * so it leaves the queue.
+	 * Give up on a task that keeps failing: mark it complete so it leaves the queue.
+	 * The caller is responsible for emitting bootstrap-complete first.
 	 *
-	 * @param task     the bootstrap task
-	 * @param producer current producer
-	 * @param reason   why the task is being abandoned, for the log
-	 * @throws Exception if the completion event can't be pushed or the bootstrap row can't be updated
+	 * @param task   the bootstrap task
+	 * @param reason why the task is being abandoned, for the log
+	 * @throws Exception if the bootstrap row can't be updated
 	 */
-	public void abandonBootstrap(BootstrapTask task, AbstractProducer producer, String reason) throws Exception {
+	public void abandonBootstrap(BootstrapTask task, String reason) throws Exception {
 		LOGGER.error("Bootstrap (id={}) abandoned: {}", task.id, reason);
-		completeBootstrap(task, producer);
 		try {
 			setBootstrapRowToCompleted(0, task.id);
 		} catch ( NoSuchElementException e ) {

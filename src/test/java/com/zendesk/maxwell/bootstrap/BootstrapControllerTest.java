@@ -90,11 +90,11 @@ public class BootstrapControllerTest {
 
 		for ( int i = 0; i < BootstrapController.MAX_TASK_ATTEMPTS - 1; i++ )
 			controller.work();
-		verify(bootstrapper, never()).abandonBootstrap(any(), any(), anyString());
+		verify(bootstrapper, never()).abandonBootstrap(any(), anyString());
 
 		controller.work();
 		verify(bootstrapper, times(BootstrapController.MAX_TASK_ATTEMPTS)).startBootstrap(eq(t), any(), any());
-		verify(bootstrapper, times(1)).abandonBootstrap(eq(t), any(), anyString());
+		verify(bootstrapper, times(1)).abandonBootstrap(eq(t), anyString());
 	}
 
 	@Test
@@ -111,7 +111,7 @@ public class BootstrapControllerTest {
 		for ( int i = 0; i < 5; i++ )
 			controller.work();
 
-		verify(bootstrapper, never()).abandonBootstrap(any(), any(), anyString());
+		verify(bootstrapper, never()).abandonBootstrap(any(), anyString());
 	}
 
 	@Test
@@ -133,14 +133,14 @@ public class BootstrapControllerTest {
 		doThrow(new SQLException("bad where clause")).when(bootstrapper).startBootstrap(eq(t), any(), any());
 		doThrow(new SQLException("maxwell db unavailable"))
 			.doNothing()
-			.when(bootstrapper).abandonBootstrap(eq(t), any(), anyString());
+			.when(bootstrapper).abandonBootstrap(eq(t), anyString());
 
 		for ( int i = 0; i < BootstrapController.MAX_TASK_ATTEMPTS; i++ )
 			controller.work();
 		controller.work();
 
 		verify(bootstrapper, times(BootstrapController.MAX_TASK_ATTEMPTS)).startBootstrap(eq(t), any(), any());
-		verify(bootstrapper, times(2)).abandonBootstrap(eq(t), any(), anyString());
+		verify(bootstrapper, times(2)).abandonBootstrap(eq(t), anyString());
 	}
 
 	@Test
@@ -189,7 +189,7 @@ public class BootstrapControllerTest {
 		for ( int i = 0; i < BootstrapController.MAX_TASK_ATTEMPTS + 2; i++ )
 			controller.work();
 
-		verify(bootstrapper, never()).abandonBootstrap(any(), any(), anyString());
+		verify(bootstrapper, never()).abandonBootstrap(any(), anyString());
 		assertThat(controller.sleeps, is(Arrays.asList(2000L, 4000L, 8000L, 16000L, 32000L)));
 	}
 
@@ -198,7 +198,7 @@ public class BootstrapControllerTest {
 		BootstrapTask t = task(1, "shard_1", "minimal");
 		controller.tasks = Arrays.asList(t);
 		doThrow(new SQLException("bad where clause")).when(bootstrapper).startBootstrap(eq(t), any(), any());
-		doThrow(new SQLException("maxwell db unavailable")).when(bootstrapper).abandonBootstrap(eq(t), any(), anyString());
+		doThrow(new SQLException("maxwell db unavailable")).when(bootstrapper).abandonBootstrap(eq(t), anyString());
 
 		for ( int i = 0; i < BootstrapController.MAX_TASK_ATTEMPTS + 2; i++ )
 			controller.work();
@@ -207,14 +207,35 @@ public class BootstrapControllerTest {
 	}
 
 	@Test
-	public void testAbandonPassesProducer() throws Exception {
+	public void testAbandonEmitsCompletionOnceAcrossRetries() throws Exception {
 		BootstrapTask t = task(1, "shard_1", "minimal");
 		controller.tasks = Arrays.asList(t);
 		doThrow(new SQLException("bad where clause")).when(bootstrapper).startBootstrap(eq(t), any(), any());
+		doThrow(new SQLException("maxwell db unavailable"))
+			.doThrow(new SQLException("maxwell db unavailable"))
+			.doNothing()
+			.when(bootstrapper).abandonBootstrap(eq(t), anyString());
 
-		for ( int i = 0; i < BootstrapController.MAX_TASK_ATTEMPTS; i++ )
+		for ( int i = 0; i < BootstrapController.MAX_TASK_ATTEMPTS + 2; i++ )
 			controller.work();
 
-		verify(bootstrapper).abandonBootstrap(eq(t), eq(producer), anyString());
+		verify(bootstrapper, times(1)).completeBootstrap(t, producer);
+		verify(bootstrapper, times(3)).abandonBootstrap(eq(t), anyString());
+	}
+
+	@Test
+	public void testAbandonRetriesCompletionIfPushFails() throws Exception {
+		BootstrapTask t = task(1, "shard_1", "minimal");
+		controller.tasks = Arrays.asList(t);
+		doThrow(new SQLException("bad where clause")).when(bootstrapper).startBootstrap(eq(t), any(), any());
+		doThrow(new SynchronousBootstrapper.BootstrapProducerException(new IOException("disk full")))
+			.doNothing()
+			.when(bootstrapper).completeBootstrap(t, producer);
+
+		for ( int i = 0; i < BootstrapController.MAX_TASK_ATTEMPTS + 1; i++ )
+			controller.work();
+
+		verify(bootstrapper, times(2)).completeBootstrap(t, producer);
+		verify(bootstrapper, times(1)).abandonBootstrap(eq(t), anyString());
 	}
 }

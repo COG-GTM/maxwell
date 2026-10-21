@@ -15,8 +15,10 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Watches maxwell.bootstrap, starts and stops bootstrap tasks
@@ -72,6 +74,8 @@ public class BootstrapController extends RunLoopProcess  {
 
 	// failed attempts per task id; only touched from the run loop thread
 	private final Map<Long, Integer> taskFailures = new HashMap<>();
+	// abandoned tasks whose bootstrap-complete was already pushed, so retries don't push it again
+	private final Set<Long> abandonCompletionSent = new HashSet<>();
 	private int consecutiveFailedPasses = 0;
 
 	@Override
@@ -161,8 +165,13 @@ public class BootstrapController extends RunLoopProcess  {
 
 	private boolean abandonTask(BootstrapTask task, String reason) {
 		try {
-			bootstrapper.abandonBootstrap(task, producer, reason);
+			if ( !abandonCompletionSent.contains(task.id) ) {
+				bootstrapper.completeBootstrap(task, producer);
+				abandonCompletionSent.add(task.id);
+			}
+			bootstrapper.abandonBootstrap(task, reason);
 			taskFailures.remove(task.id);
+			abandonCompletionSent.remove(task.id);
 			return true;
 		} catch ( Exception e ) {
 			LOGGER.error("couldn't abandon bootstrap task {}, will try again", task.logString(), e);
