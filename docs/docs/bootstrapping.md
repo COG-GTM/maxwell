@@ -53,6 +53,11 @@ mysql> insert into maxwell.bootstrap (database_name, table_name, client_id, star
 ```
 
 
+Bootstraps honor the configured [filter](filtering.md). A task for a table that is
+blacklisted or excluded by the filter is marked complete without emitting any
+rows (not even `bootstrap-start` / `bootstrap-complete`), and column-value filters
+are applied to each bootstrapped row, just as they are for binlog rows.
+
 # Async vs Sync bootstrapping
 ***
 The Maxwell replicator is single threaded; events are captured by one thread from the binlog and replicated to Kafka one message at a time.

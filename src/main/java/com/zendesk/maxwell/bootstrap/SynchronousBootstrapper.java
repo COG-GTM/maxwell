@@ -3,6 +3,7 @@ package com.zendesk.maxwell.bootstrap;
 import com.zendesk.maxwell.CaseSensitivity;
 import com.zendesk.maxwell.MaxwellMysqlStatus;
 import com.zendesk.maxwell.errors.DuplicateProcessException;
+import com.zendesk.maxwell.filtering.Filter;
 import com.zendesk.maxwell.producer.MaxwellOutputConfig;
 import com.zendesk.maxwell.MaxwellContext;
 import com.zendesk.maxwell.producer.AbstractProducer;
@@ -26,6 +27,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -112,7 +114,14 @@ public class SynchronousBootstrapper {
 			LOGGER.debug("bootstrapping requested for {}", task.logString());
 		}
 
+		Filter filter = context.getFilter();
+		if ( isTableBlacklisted(filter, task.database, task.table) )
+			throw new BootstrapAbortException(filteredOutMessage(task.database, task.table));
+
 		Table table = getTableForTask(task);
+
+		if ( !shouldBootstrapTable(filter, table.database, table.name, table.getColumnNames()) )
+			throw new BootstrapAbortException(filteredOutMessage(table.database, table.name));
 
 		producer.push(bootstrapStartRowMap(task, table));
 		LOGGER.info(String.format("bootstrapping started for %s.%s", task.database, task.table));
@@ -125,17 +134,20 @@ public class SynchronousBootstrapper {
 			while ( resultSet.next() ) {
 				RowMap row = bootstrapEventRowMap("bootstrap-insert", table.database, table.name, table.getPKList(), task.comment);
 				setRowValues(row, resultSet, table);
-				row.setSchemaId(currentSchemaID);
 
-				Scripting scripting = context.getConfig().scripting;
-				if ( scripting != null )
-					scripting.invoke(row);
+				if ( shouldBootstrapRow(filter, table.database, table.name, row) ) {
+					row.setSchemaId(currentSchemaID);
 
-				if ( LOGGER.isDebugEnabled() )
-					LOGGER.debug("bootstrapping row : {}", row.toJSON());
+					Scripting scripting = context.getConfig().scripting;
+					if ( scripting != null )
+						scripting.invoke(row);
 
-				producer.push(row);
-				++insertedRows;
+					if ( LOGGER.isDebugEnabled() )
+						LOGGER.debug("bootstrapping row : {}", row.toJSON());
+
+					producer.push(row);
+					++insertedRows;
+				}
 
 				updateInsertedRowsColumn(insertedRows, task.id);
 			}
@@ -143,6 +155,55 @@ public class SynchronousBootstrapper {
 		} catch ( NoSuchElementException e ) {
 			LOGGER.info("bootstrapping aborted for " + task.logString());
 		}
+	}
+
+	private static String filteredOutMessage(String database, String table) {
+		return String.format("%s.%s is excluded by the configured filter", database, table);
+	}
+
+	static boolean isTableBlacklisted(Filter filter, String database, String table) {
+		if ( Filter.isSystemBlacklisted(database, table) )
+			return true;
+
+		return filter != null && filter.isTableBlacklisted(database, table);
+	}
+
+	/**
+	 * Whether a bootstrap of this table may emit anything at all.  Mirrors the
+	 * table-level check the binlog replicator applies before outputting row events.
+	 *
+	 * @param filter the active filter, or null
+	 * @param database database name
+	 * @param table table name
+	 * @param columnNames the table's columns, used to honor column-value include filters
+	 * @return false if the table is blacklisted or excluded by the filter
+	 */
+	static boolean shouldBootstrapTable(Filter filter, String database, String table, Set<String> columnNames) {
+		if ( isTableBlacklisted(filter, database, table) )
+			return false;
+
+		if ( filter == null || filter.isSystemWhitelisted(database, table) )
+			return true;
+
+		return filter.includes(database, table)
+			|| filter.couldIncludeFromColumnFilters(database, table, columnNames);
+	}
+
+	/**
+	 * Whether a single bootstrapped row passes the filter, including column-value filters.
+	 * Mirrors the row-level check the binlog replicator applies.
+	 *
+	 * @param filter the active filter, or null
+	 * @param database database name
+	 * @param table table name
+	 * @param row the row to check
+	 * @return whether the row may be pushed to the producer
+	 */
+	static boolean shouldBootstrapRow(Filter filter, String database, String table, RowMap row) {
+		if ( filter == null || filter.isSystemWhitelisted(database, table) )
+			return true;
+
+		return filter.includes(database, table, row.getData());
 	}
 
 	private void updateInsertedRowsColumn(int insertedRows, Long id) throws SQLException, NoSuchElementException, DuplicateProcessException {
