@@ -128,6 +128,77 @@ public class FilterTest {
 
 	}
 
+	@Test(timeout = 5000)
+	public void TestUnterminatedRegexpIsRejected() throws Exception {
+		String[] inputs = {
+			"include: db./abc",
+			"include: /abc",
+			"include: a./x",
+			"include: db.tbl.col=/abc",
+			"include: db./abc\\/",
+		};
+		for ( String input : inputs ) {
+			try {
+				runParserTest(input);
+				fail("expected InvalidFilterException for " + input);
+			} catch ( InvalidFilterException e ) {
+				assertEquals("unterminated regexp", e.getMessage());
+			}
+		}
+	}
+
+	@Test
+	public void TestEscapedSlashInRegexp() throws Exception {
+		filters = runParserTest("include: db./a\\/b/");
+		assertEquals("a\\/b", filters.get(0).getTablePattern().toString());
+	}
+
+	@Test
+	public void TestInvalidRegexpIsRejected() throws Exception {
+		try {
+			runParserTest("include: db./(abc/");
+			fail("expected InvalidFilterException");
+		} catch ( InvalidFilterException e ) {
+			assertTrue(e.getMessage().startsWith("invalid regexp"));
+		}
+	}
+
+	@Test
+	public void TestInvalidQuotedPatternIsRejected() throws Exception {
+		try {
+			runParserTest("include: 'foo['.bar");
+			fail("expected InvalidFilterException");
+		} catch ( InvalidFilterException e ) {
+			assertTrue(e.getMessage().startsWith("invalid regexp"));
+		}
+	}
+
+	@Test(timeout = 5000)
+	public void TestOversizedFilterIsRejected() throws Exception {
+		StringBuilder sb = new StringBuilder("include: db./");
+		while ( sb.length() <= FilterParser.MAX_FILTER_LENGTH )
+			sb.append('a');
+		sb.append('/');
+		try {
+			runParserTest(sb.toString());
+			fail("expected InvalidFilterException");
+		} catch ( InvalidFilterException e ) {
+			assertTrue(e.getMessage().contains("maximum length"));
+		}
+	}
+
+	@Test
+	public void TestSetUnterminatedRegexpKeepsFilter() throws Exception {
+		Filter f = new Filter("exclude: *.*");
+		try {
+			f.set("include: a./x");
+			fail("expected InvalidFilterException");
+		} catch ( InvalidFilterException e ) {
+			// expected
+		}
+		assertEquals("exclude: *.*", f.toString());
+	}
+
 	@Test
 	public void TestSetValidFilter() throws Exception {
 		Filter f = new Filter("exclude: *.*, include: foo.bar.col=null");

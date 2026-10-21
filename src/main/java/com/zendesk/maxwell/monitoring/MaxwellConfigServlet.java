@@ -14,9 +14,11 @@ import com.zendesk.maxwell.filtering.InvalidFilterException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintWriter;
-import java.util.stream.Collectors;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 
 /**
  * An HTTP servlet which allows for the live reconfiguration of maxwell. If
@@ -25,6 +27,8 @@ import java.util.stream.Collectors;
 public class MaxwellConfigServlet extends HttpServlet {
 	private static final java.lang.String CONTENT_TYPE = "application/json";
 	private static final ObjectMapper mapper = new ObjectMapper();
+	static final int MAX_BODY_LENGTH = 128 * 1024;
+	static final int MAX_AUTHORIZATION_LENGTH = 1024;
 	static final Logger LOGGER = LoggerFactory.getLogger(MaxwellConfigServlet.class);
 	private final MaxwellContext context;
 
@@ -53,18 +57,59 @@ public class MaxwellConfigServlet extends HttpServlet {
 		}
 	}
 
+	private static class RequestBodyTooLargeException extends IOException {
+		RequestBodyTooLargeException() {
+			super("request body exceeds " + MAX_BODY_LENGTH + " characters");
+		}
+	}
+
+	private static void writeError(HttpServletResponse resp, int code, String message) throws IOException {
+		resp.setStatus(code);
+		resp.setContentType(CONTENT_TYPE);
+		try (PrintWriter writer = resp.getWriter()) {
+			writer.println(ErrorResponse.getErrorResponseString(code, message));
+		}
+	}
+
+	private static String readBody(HttpServletRequest req) throws IOException {
+		if ( req.getContentLengthLong() > MAX_BODY_LENGTH )
+			throw new RequestBodyTooLargeException();
+
+		StringBuilder sb = new StringBuilder();
+		char[] buf = new char[4096];
+		BufferedReader reader = req.getReader();
+		int n;
+		while ( (n = reader.read(buf)) != -1 ) {
+			if ( sb.length() + n > MAX_BODY_LENGTH )
+				throw new RequestBodyTooLargeException();
+			sb.append(buf, 0, n);
+		}
+		return sb.toString();
+	}
+
+	private boolean isAuthorized(HttpServletRequest req) {
+		String token = context.getConfig().httpConfigToken;
+		if ( token == null )
+			return true;
+
+		String header = req.getHeader("Authorization");
+		int maxHeaderLength = Math.max(MAX_AUTHORIZATION_LENGTH, token.length() + 64);
+		if ( header == null || header.length() > maxHeaderLength || !header.regionMatches(true, 0, "Bearer ", 0, 7) )
+			return false;
+
+		byte[] presented = header.substring(7).trim().getBytes(StandardCharsets.UTF_8);
+		return MessageDigest.isEqual(presented, token.getBytes(StandardCharsets.UTF_8));
+	}
+
 	private void handleConfigUpdateRequest(HttpServletRequest req, HttpServletResponse resp) throws IOException {
 		SerializedConfig sconfig;
 		try {
-			String reqbody = req.getReader().lines().collect(Collectors.joining(System.lineSeparator()));
-			sconfig = mapper.readValue(reqbody, SerializedConfig.class);
+			sconfig = mapper.readValue(readBody(req), SerializedConfig.class);
+		} catch (RequestBodyTooLargeException e) {
+			writeError(resp, HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE, e.getMessage());
+			return;
 		} catch (Exception e) {
-			resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-			resp.setContentType(CONTENT_TYPE);
-			try (PrintWriter writer = resp.getWriter()) {
-				writer.println(ErrorResponse.getErrorResponseString(HttpServletResponse.SC_BAD_REQUEST,
-						String.format("error processing body: %s", e.getMessage())));
-			}
+			writeError(resp, HttpServletResponse.SC_BAD_REQUEST, String.format("error processing body: %s", e.getMessage()));
 			return;
 		}
 
@@ -77,12 +122,7 @@ public class MaxwellConfigServlet extends HttpServlet {
 				writer.println(getSerializedConfig());
 			}
 		} catch (InvalidFilterException e) {
-			resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-			resp.setContentType(CONTENT_TYPE);
-			try (PrintWriter writer = resp.getWriter()) {
-				writer.println(ErrorResponse.getErrorResponseString(HttpServletResponse.SC_BAD_REQUEST,
-						String.format("invalid filter: %s", e.getMessage())));
-			}
+			writeError(resp, HttpServletResponse.SC_BAD_REQUEST, String.format("invalid filter: %s", e.getMessage()));
 		}
 	}
 
@@ -111,6 +151,12 @@ public class MaxwellConfigServlet extends HttpServlet {
 
 	@Override
 	public void service(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
+		if (!isAuthorized(request)) {
+			response.setHeader("WWW-Authenticate", "Bearer");
+			writeError(response, HttpServletResponse.SC_UNAUTHORIZED, "missing or invalid bearer token");
+			return;
+		}
+
 		if (request.getMethod().equalsIgnoreCase("PATCH")) {
 			doPatch(request, response);
 		} else {

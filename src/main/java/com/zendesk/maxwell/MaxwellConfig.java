@@ -434,6 +434,11 @@ public class MaxwellConfig extends AbstractConfig {
 	public boolean enableHttpConfig;
 
 	/**
+	 * bearer token required by the http config endpoint; when null the endpoint is unauthenticated
+	 */
+	public String httpConfigToken;
+
+	/**
 	 * String that uniquely identifies this instance of maxwell
 	 */
 	public String clientID;
@@ -1010,6 +1015,7 @@ public class MaxwellConfig extends AbstractConfig {
 		parser.accepts( "http_diagnostic", "enable http diagnostic endpoint: true|false. default: false" ).withOptionalArg().ofType(Boolean.class);
 		parser.accepts( "http_diagnostic_timeout", "the http diagnostic response timeout in ms when http_diagnostic=true. default: 10000" ).withRequiredArg().ofType(Integer.class);
 		parser.accepts( "http_config", "enable http config update endpoint: true|false. default: false" ).withOptionalArg().ofType(Boolean.class);
+		parser.accepts( "http_config_token", "bearer token required by the http config endpoint (Authorization: Bearer <token>)" ).withRequiredArg();
 
 		parser.accepts( "help", "display help" ).withOptionalArg().forHelp();
 
@@ -1211,6 +1217,7 @@ public class MaxwellConfig extends AbstractConfig {
 		this.diagnosticConfig.timeout = fetchLongOption("http_diagnostic_timeout", options, properties, 10000L);
 
 		this.enableHttpConfig = fetchBooleanOption("http_config", options, properties, false);
+		this.httpConfigToken = fetchStringOption("http_config_token", options, properties, null);
 
 		this.filterList          = fetchStringOption("filter", options, properties, null);
 		this.ignoreMissingSchema          =  fetchBooleanOption("ignore_missing_schema", options, properties, false);
@@ -1343,6 +1350,8 @@ public class MaxwellConfig extends AbstractConfig {
 	 * Validate the maxwell configuration, exiting with an error message if invalid.
 	 */
 	public void validate() {
+		if ( this.httpConfigToken != null && this.httpConfigToken.trim().isEmpty() )
+			usageForOptions("http_config_token must not be empty; omit it to disable /config authentication", "http_config_token");
 		validatePartitionBy();
 		validateFilter();
 

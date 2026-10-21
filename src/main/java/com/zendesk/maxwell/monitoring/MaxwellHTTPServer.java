@@ -22,7 +22,7 @@ import static com.zendesk.maxwell.monitoring.MaxwellMetrics.reportingTypeHttp;
 
 public class MaxwellHTTPServer {
 
-	private static final Logger LOGGER = LoggerFactory.getLogger(MaxwellHTTPServer.class);
+	static final Logger LOGGER = LoggerFactory.getLogger(MaxwellHTTPServer.class);
 
 	public static void startIfRequired(MaxwellContext context) throws IOException {
 		MaxwellMetrics.Registries metricsRegistries = getMetricsRegistries(context);
@@ -118,6 +118,9 @@ class MaxwellHTTPServerWorker implements StoppableTask, Runnable {
 		}
 
 		if (this.context.getConfig().enableHttpConfig) {
+			if (this.context.getConfig().httpConfigToken == null) {
+				MaxwellHTTPServer.LOGGER.warn("http_config is enabled without http_config_token: /config accepts unauthenticated updates. Set http_config_token or bind http_bind_address to a trusted interface.");
+			}
 			handler.addServlet(new ServletHolder(new MaxwellConfigServlet(this.context)), "/config");
 			indexList.addLink("/config", "POST endpoing to update maxwell config.");
 		}

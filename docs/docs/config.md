@@ -250,6 +250,7 @@ init_position                  | FILE:POSITION[:HEARTBEAT]           | ignore th
 replay                         | BOOLEAN                             | enable maxwell's read-only "replay" mode: don't store a binlog position or schema changes.  Not available in config.properties. |
 buffer_memory_usage            | FLOAT                               | Determines how much memory the Maxwell event buffer will use from the jvm max memory. Size of the buffer is: buffer_memory_usage * -Xmx" | 0.25
 http_config                    | BOOLEAN                             | enable http config endpoint for config updates without restart | false
+http_config_token              | STRING                              | when set, requests to the http config endpoint must send `Authorization: Bearer <token>` |
 binlog_event_queue_size        | INT                                 | Size of queue to buffer events parsed from binlog   | 5000
 
 
@@ -308,7 +309,12 @@ this would be equivalent to passing `--user=auser`.
 ## via PATCH: /config
 If `http_config` is set to true in config.properties or in the environment,
 the endpoint /config will be exposed. Currently only filter updates are supported,
-and a filter can be updated with a request in the following format
+and a filter can be updated with a request in the following format.
+
+The endpoint is unauthenticated unless `http_config_token` is set, in which case
+every request (including GET) must send `Authorization: Bearer <token>`. Set a token
+or restrict `http_bind_address` to a trusted interface before enabling `http_config`.
+Request bodies are limited to 128KB and filter strings to 64KB.
 
 `PATCH: /config`
 ```json
