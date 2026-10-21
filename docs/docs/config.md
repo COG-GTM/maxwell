@@ -156,7 +156,13 @@ rabbitmq_exchange_autodelete   | BOOLEAN    | If set, the exchange is deleted wh
 rabbitmq_routing_key_template  | STRING     | A string template for the routing key, `%db%` and `%table%` will be substituted. | `%db%.%table%`.
 rabbitmq_message_persistent    | BOOLEAN    | Eanble message persistence. | false
 rabbitmq_declare_exchange      | BOOLEAN    | Should declare the exchange for rabbitmq publisher | true
-rabbitmq_use_ssl               | BOOLEAN    | If true, will connect to the server using SSL. | false
+rabbitmq_use_ssl               | BOOLEAN    | If true, will connect to the server using SSL. The broker certificate and hostname are always verified. | false
+rabbitmq_ssl_truststore        | STRING     | Truststore used to verify the broker certificate | JVM trust store
+rabbitmq_ssl_truststore_password | STRING   | Password of `rabbitmq_ssl_truststore` |
+rabbitmq_ssl_truststore_type   | STRING     | Type of `rabbitmq_ssl_truststore` (JKS, PKCS12) | JVM default
+rabbitmq_ssl_keystore          | STRING     | Keystore with a client certificate for mutual TLS |
+rabbitmq_ssl_keystore_password | STRING     | Password of `rabbitmq_ssl_keystore` |
+rabbitmq_ssl_keystore_type     | STRING     | Type of `rabbitmq_ssl_keystore` (JKS, PKCS12) | JVM default
 
 _See also:_ [RabbitMQ Producer Documentation](/producers#rabbitmq)
 
