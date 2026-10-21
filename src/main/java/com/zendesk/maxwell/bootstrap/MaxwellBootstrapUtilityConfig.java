@@ -11,6 +11,7 @@ import java.util.Properties;
 import java.util.Map;
 
 import com.zendesk.maxwell.util.AbstractConfig;
+import com.github.shyiko.mysql.binlog.network.SSLMode;
 import com.zendesk.maxwell.MaxwellMysqlConfig;
 
 public class MaxwellBootstrapUtilityConfig extends AbstractConfig {
@@ -157,7 +158,14 @@ public class MaxwellBootstrapUtilityConfig extends AbstractConfig {
 
 		this.replicationMysql = parseMysqlConfig("replication_", options, properties);
 		if ( replicationMysql.host == null && replicationMysql.port.equals(mysql.port) ) {
-			this.replicationMysql = this.mysql;
+			SSLMode replicationSSL = replicationMysql.sslMode;
+			if ( replicationSSL == null || replicationSSL == mysql.sslMode ) {
+				this.replicationMysql = this.mysql;
+			} else {
+				this.replicationMysql = new MaxwellMysqlConfig(this.mysql);
+				this.replicationMysql.jdbcOptions.putAll(this.mysql.jdbcOptions);
+				this.replicationMysql.sslMode = replicationSSL;
+			}
 		} else {
 			if ( replicationMysql.user == null )
 				replicationMysql.user = mysql.user;
