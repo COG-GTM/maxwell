@@ -64,6 +64,80 @@ public class BootstrapIntegrationTest extends MaxwellTestWithIsolatedServer {
 		runJSON("json/bootstrap-whitelist", (c) -> c.filter = filter);
 	}
 
+	private List<RowMap> bootstrapRowsFor(List<RowMap> rows, String table) {
+		List<RowMap> matching = new ArrayList<>();
+		for ( RowMap r : rows ) {
+			if ( "shard_1".equals(r.getDatabase()) && table.equals(r.getTable()) && r.getRowType().startsWith("bootstrap") )
+				matching.add(r);
+		}
+		return matching;
+	}
+
+	private void assertBootstrapTaskCompleted(String table) throws Exception {
+		java.sql.ResultSet rs = server.query(
+			"select is_complete, inserted_rows from maxwell.bootstrap where database_name = 'shard_1' and table_name = '" + table + "'"
+		);
+		assertThat(rs.next(), is(true));
+		assertThat(rs.getInt("is_complete"), is(1));
+		assertThat(rs.getInt("inserted_rows"), is(0));
+	}
+
+	@Test
+	public void testBootstrapSkipsTableExcludedByFilter() throws Exception {
+		String[] sql = {
+			"truncate maxwell.bootstrap",
+			"create table shard_1.bootstrap_excluded (id int auto_increment primary key, secret varchar(255))",
+			"insert into shard_1.bootstrap_excluded set secret = 'hidden'",
+			"insert into shard_1.minimal set account_id = 1, text_field = 'hello'",
+			"insert into maxwell.bootstrap set database_name = 'shard_1', table_name = 'bootstrap_excluded'",
+			"insert into maxwell.bootstrap set database_name = 'shard_1', table_name = 'minimal'"
+		};
+		final Filter filter = new Filter("exclude: shard_1.bootstrap_excluded");
+
+		List<RowMap> rows = MaxwellTestSupport.getRowsWithReplicator(server, sql, null, (c) -> c.filter = filter);
+
+		assertThat(bootstrapRowsFor(rows, "bootstrap_excluded").size(), is(0));
+		assertThat(bootstrapRowsFor(rows, "minimal").isEmpty(), is(false));
+		assertBootstrapTaskCompleted("bootstrap_excluded");
+	}
+
+	@Test
+	public void testBootstrapSkipsBlacklistedTable() throws Exception {
+		String[] sql = {
+			"truncate maxwell.bootstrap",
+			"create table shard_1.bootstrap_blacklisted (id int auto_increment primary key, secret varchar(255))",
+			"insert into shard_1.bootstrap_blacklisted set secret = 'hidden'",
+			"insert into maxwell.bootstrap set database_name = 'shard_1', table_name = 'bootstrap_blacklisted'"
+		};
+		final Filter filter = new Filter("blacklist: shard_1.bootstrap_blacklisted");
+
+		List<RowMap> rows = MaxwellTestSupport.getRowsWithReplicator(server, sql, null, (c) -> c.filter = filter);
+
+		assertThat(bootstrapRowsFor(rows, "bootstrap_blacklisted").size(), is(0));
+		assertBootstrapTaskCompleted("bootstrap_blacklisted");
+	}
+
+	@Test
+	public void testBootstrapAppliesColumnValueFilters() throws Exception {
+		String[] sql = {
+			"truncate maxwell.bootstrap",
+			"create table shard_1.bootstrap_colfilter (id int auto_increment primary key, status varchar(255))",
+			"insert into shard_1.bootstrap_colfilter set status = 'shipped'",
+			"insert into shard_1.bootstrap_colfilter set status = 'pending'",
+			"insert into maxwell.bootstrap set database_name = 'shard_1', table_name = 'bootstrap_colfilter'"
+		};
+		final Filter filter = new Filter("exclude: shard_1.bootstrap_colfilter, include: shard_1.bootstrap_colfilter.status=shipped");
+
+		List<RowMap> rows = MaxwellTestSupport.getRowsWithReplicator(server, sql, null, (c) -> c.filter = filter);
+
+		List<String> inserted = new ArrayList<>();
+		for ( RowMap r : bootstrapRowsFor(rows, "bootstrap_colfilter") ) {
+			if ( "bootstrap-insert".equals(r.getRowType()) )
+				inserted.add((String) r.getData("status"));
+		}
+		assertThat(inserted, is(java.util.Arrays.asList("shipped")));
+	}
+
 	@Test
 	public void testBootstrapNullValues() throws Exception {
 		runJSON("json/bootstrap-null-values");
