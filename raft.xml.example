@@ -1,17 +1,60 @@
 <?xml version='1.0' encoding='utf-8'?>
+<!--
+  Example jgroups-raft stack for Maxwell HA mode.  Copy to raft.xml and edit.
+
+  Hardened defaults:
+    * TCP + TCPPING with a static member list (no UDP multicast discovery).
+    * SYM_ENCRYPT: all cluster traffic is AES-encrypted with a shared secret
+      key; messages that don't decrypt with that key are dropped.
+    * AUTH (X509Token): a node must prove possession of the shared
+      certificate/private key before the coordinator admits it to the view.
+
+  Every node needs the same keystore, which holds:
+    * a secret AES key under alias "maxwell-raft-sym" (SYM_ENCRYPT)
+    * an RSA key pair + certificate under alias "maxwell-raft-auth" (AUTH)
+  See docs/docs/high_availability.md for keytool commands.
+
+  Secrets are not stored in this file.  The keystore password and AUTH value
+  are read from environment variables, which (unlike JVM -D arguments) are not
+  visible to other local users in the process list:
+    MAXWELL_RAFT_KEYSTORE_PASSWORD, MAXWELL_RAFT_AUTH_VALUE
+  Non-secret settings are JVM system properties, e.g.
+    JAVA_OPTS="-Dmaxwell.raft.keystore=/etc/maxwell/raft.p12 \
+               -Djgroups.tcpping.initial_hosts=host1[7800],host2[7800],host3[7800]"
+
+  This stack authenticates and encrypts cluster traffic but it is not a
+  substitute for network isolation: run HA nodes on a private network and
+  firewall the bind port so only the other Maxwell nodes can reach it.
+-->
 <config xmlns="urn:org:jgroups"
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="urn:org:jgroups http://www.jgroups.org/schema/jgroups.xsd">
-    <UDP mcast_addr="228.8.8.8" mcast_port="${jgroups.udp.mcast_port:45588}"/>
-    <PING />
+    <TCP bind_addr="${jgroups.bind_addr:SITE_LOCAL}"
+         bind_port="${jgroups.bind_port:7800}"
+         port_range="0"/>
+    <TCPPING initial_hosts="${jgroups.tcpping.initial_hosts:host1[7800],host2[7800],host3[7800]}"
+             port_range="0"/>
     <MERGE3 />
-    <FD_SOCK/>
-    <FD_ALL/>
+    <FD_ALL3/>
     <VERIFY_SUSPECT timeout="1500"/>
-    <pbcast.NAKACK2 xmit_interval="500"/>
+    <SYM_ENCRYPT sym_algorithm="AES/CBC/PKCS5Padding"
+                 sym_iv_length="16"
+                 keystore_type="PKCS12"
+                 keystore_name="${maxwell.raft.keystore:raft.p12}"
+                 store_password="${MAXWELL_RAFT_KEYSTORE_PASSWORD}"
+                 alias="maxwell-raft-sym"/>
+    <pbcast.NAKACK2 xmit_interval="500" use_mcast_xmit="false"/>
     <UNICAST3 xmit_interval="500"/>
     <pbcast.STABLE desired_avg_gossip="50000" max_bytes="4M"/>
     <raft.NO_DUPES/>
+    <AUTH auth_class="org.jgroups.auth.X509Token"
+          auth_value="${MAXWELL_RAFT_AUTH_VALUE}"
+          keystore_type="PKCS12"
+          keystore_path="${maxwell.raft.keystore:raft.p12}"
+          keystore_password="${MAXWELL_RAFT_KEYSTORE_PASSWORD}"
+          cert_password="${MAXWELL_RAFT_KEYSTORE_PASSWORD}"
+          cert_alias="maxwell-raft-auth"
+          cipher_type="RSA"/>
     <pbcast.GMS print_local_addr="true" join_timeout="2000"/>
     <UFC max_credits="2M" min_threshold="0.4"/>
     <MFC max_credits="2M" min_threshold="0.4"/>
