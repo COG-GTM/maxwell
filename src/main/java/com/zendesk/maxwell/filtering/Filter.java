@@ -10,22 +10,23 @@ import java.util.stream.Collectors;
 public class Filter {
 	static final Logger LOGGER = LoggerFactory.getLogger(Filter.class);
 
-	private final List<FilterPattern> patterns;
+	// Immutable snapshot, replaced wholesale so concurrent readers never see a partial rule set.
+	private volatile List<FilterPattern> patterns;
 	private String maxwellDB;
 
 	public Filter() {
-		this.patterns = new ArrayList<>();
+		this.patterns = Collections.emptyList();
 		this.maxwellDB = "maxwell";
 	}
 	public Filter(String filterString) throws InvalidFilterException {
 		this();
-		patterns.addAll(new FilterParser(filterString).parse());
+		this.patterns = List.copyOf(new FilterParser(filterString).parse());
 	}
 
 	public Filter(String maxwellDB, String filterString) throws InvalidFilterException {
 		this();
 		this.maxwellDB = maxwellDB;
-		patterns.addAll(new FilterParser(filterString).parse());
+		this.patterns = List.copyOf(new FilterParser(filterString).parse());
 	}
 
 	@Override
@@ -35,10 +36,8 @@ public class Filter {
 			.collect(Collectors.joining(", "));
 	}
 
-	public void set(String filterString) throws InvalidFilterException {
-		List<FilterPattern> parsedFilter = new FilterParser(filterString).parse();
-		this.patterns.clear();
-		this.patterns.addAll(parsedFilter);
+	public synchronized void set(String filterString) throws InvalidFilterException {
+		this.patterns = List.copyOf(new FilterParser(filterString).parse());
 	}
 
 	public boolean isSystemWhitelisted(String database, String table) {
@@ -50,8 +49,11 @@ public class Filter {
 		return maxwellDB.equals(database);
 	}
 
-	public void addRule(String filterString) throws InvalidFilterException {
-		this.patterns.addAll(new FilterParser(filterString).parse());
+	public synchronized void addRule(String filterString) throws InvalidFilterException {
+		List<FilterPattern> parsed = new FilterParser(filterString).parse();
+		List<FilterPattern> updated = new ArrayList<>(this.patterns);
+		updated.addAll(parsed);
+		this.patterns = List.copyOf(updated);
 	}
 
 	public List<FilterPattern> getRules() {

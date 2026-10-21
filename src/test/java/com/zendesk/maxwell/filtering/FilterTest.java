@@ -6,6 +6,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 import static org.junit.Assert.*;
@@ -159,5 +161,47 @@ public class FilterTest {
 		Filter f = new Filter("");
 		assertEquals(f.toString(), "");
 	}
-}
 
+	@Test
+	public void TestConcurrentSetNeverExposesPartialRules() throws Exception {
+		Filter f = new Filter("exclude: secret.*, blacklist: hidden.*");
+		AtomicBoolean done = new AtomicBoolean(false);
+		AtomicReference<Throwable> failure = new AtomicReference<>();
+
+		Thread writer = new Thread(() -> {
+			try {
+				for ( int i = 0; i < 20000; i++ ) {
+					if ( i % 2 == 0 )
+						f.set("exclude: secret.*, blacklist: hidden.*, include: other.*");
+					else
+						f.set("exclude: secret.*, blacklist: hidden.*");
+				}
+			} catch ( Throwable t ) {
+				failure.compareAndSet(null, t);
+			} finally {
+				done.set(true);
+			}
+		});
+
+		Thread reader = new Thread(() -> {
+			try {
+				while ( !done.get() && failure.get() == null ) {
+					if ( f.includes("secret", "t") )
+						throw new AssertionError("excluded table leaked during filter swap");
+					if ( !f.isTableBlacklisted("hidden", "t") )
+						throw new AssertionError("blacklisted table lost during filter swap");
+				}
+			} catch ( Throwable t ) {
+				failure.compareAndSet(null, t);
+			}
+		});
+
+		reader.start();
+		writer.start();
+		writer.join();
+		reader.join();
+
+		if ( failure.get() != null )
+			throw new AssertionError(failure.get());
+	}
+}
