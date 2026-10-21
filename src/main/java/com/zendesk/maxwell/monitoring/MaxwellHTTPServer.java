@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.util.concurrent.TimeoutException;
 import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.net.InetSocketAddress;
 
 import static com.zendesk.maxwell.monitoring.MaxwellMetrics.reportingTypeHttp;
@@ -30,7 +31,10 @@ public class MaxwellHTTPServer {
 		if (metricsRegistries != null || diagnosticContext != null || context.getConfig().enableHttpConfig) {
 			LOGGER.info("Maxwell http server starting");
 			int port = context.getConfig().httpPort;
-			String httpBindAddress = context.getConfig().httpBindAddress;
+			String httpBindAddress = context.getConfig().getEffectiveHttpBindAddress();
+			if ( context.getConfig().enableHttpConfig && !isLoopback(httpBindAddress) )
+				LOGGER.warn("http_config is enabled on non-loopback address " + (httpBindAddress == null ? "0.0.0.0" : httpBindAddress)
+					+ "; http_config_secret is sent in clear text, expose it only on a trusted network or behind a TLS proxy");
 			String pathPrefix = context.getConfig().httpPathPrefix;
 			MaxwellHTTPServerWorker maxwellHTTPServerWorker = new MaxwellHTTPServerWorker(httpBindAddress, port, pathPrefix, metricsRegistries, diagnosticContext, context);
 			Thread thread = new Thread(maxwellHTTPServerWorker);
@@ -44,6 +48,16 @@ public class MaxwellHTTPServer {
 			thread.setDaemon(true);
 			thread.start();
 			LOGGER.info("Maxwell http server started on port " + port);
+		}
+	}
+
+	private static boolean isLoopback(String bindAddress) {
+		if ( bindAddress == null )
+			return false;
+		try {
+			return InetAddress.getByName(bindAddress).isLoopbackAddress();
+		} catch ( UnknownHostException e ) {
+			return false;
 		}
 	}
 

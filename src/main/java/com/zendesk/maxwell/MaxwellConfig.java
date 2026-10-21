@@ -42,6 +42,7 @@ public class MaxwellConfig extends AbstractConfig {
 	 * </p>
 	 */
 	public static final String GTID_MODE_ENV = "GTID_MODE";
+	public static final int HTTP_CONFIG_SECRET_MIN_LENGTH = 16;
 
 	/**
 	 * If non-null, specify a mysql to replicate from.<br>
@@ -432,6 +433,14 @@ public class MaxwellConfig extends AbstractConfig {
 	 * </p>
 	 */
 	public boolean enableHttpConfig;
+
+	/**
+	 * shared secret required (as <code>Authorization: Bearer &lt;secret&gt;</code>) by the http config endpoint
+	 * <p>
+	 *     Mandatory when {@link #enableHttpConfig} is set.
+	 * </p>
+	 */
+	public String httpConfigSecret;
 
 	/**
 	 * String that uniquely identifies this instance of maxwell
@@ -1009,7 +1018,8 @@ public class MaxwellConfig extends AbstractConfig {
 		parser.accepts( "http_bind_address", "the ip address the server will bind to when http reporting is configured" ).withRequiredArg();
 		parser.accepts( "http_diagnostic", "enable http diagnostic endpoint: true|false. default: false" ).withOptionalArg().ofType(Boolean.class);
 		parser.accepts( "http_diagnostic_timeout", "the http diagnostic response timeout in ms when http_diagnostic=true. default: 10000" ).withRequiredArg().ofType(Integer.class);
-		parser.accepts( "http_config", "enable http config update endpoint: true|false. default: false" ).withOptionalArg().ofType(Boolean.class);
+		parser.accepts( "http_config", "enable http config update endpoint: true|false. default: false. requires http_config_secret" ).withOptionalArg().ofType(Boolean.class);
+		parser.accepts( "http_config_secret", "shared secret (min " + HTTP_CONFIG_SECRET_MIN_LENGTH + " chars) clients must send as 'Authorization: Bearer <secret>' to the http config endpoint" ).withRequiredArg();
 
 		parser.accepts( "help", "display help" ).withOptionalArg().forHelp();
 
@@ -1211,6 +1221,7 @@ public class MaxwellConfig extends AbstractConfig {
 		this.diagnosticConfig.timeout = fetchLongOption("http_diagnostic_timeout", options, properties, 10000L);
 
 		this.enableHttpConfig = fetchBooleanOption("http_config", options, properties, false);
+		this.httpConfigSecret = fetchStringOption("http_config_secret", options, properties, null);
 
 		this.filterList          = fetchStringOption("filter", options, properties, null);
 		this.ignoreMissingSchema          =  fetchBooleanOption("ignore_missing_schema", options, properties, false);
@@ -1325,6 +1336,28 @@ public class MaxwellConfig extends AbstractConfig {
 
 	}
 
+	/**
+	 * The address the http server should bind to.  When unset, the sensitive
+	 * <code>http_config</code> / <code>http_diagnostic</code> endpoints restrict
+	 * the server to loopback; otherwise all interfaces are used (null).
+	 * @return bind address, or null for all interfaces
+	 */
+	public String getEffectiveHttpBindAddress() {
+		if ( this.httpBindAddress != null )
+			return this.httpBindAddress;
+		boolean diagnosticEnabled = this.diagnosticConfig != null && this.diagnosticConfig.enable;
+		if ( this.enableHttpConfig || diagnosticEnabled )
+			return "127.0.0.1";
+		return null;
+	}
+
+	private void validateHttpConfig() {
+		if ( this.enableHttpConfig
+				&& (this.httpConfigSecret == null || this.httpConfigSecret.length() < HTTP_CONFIG_SECRET_MIN_LENGTH) ) {
+			usageForOptions("http_config=true requires --http_config_secret of at least " + HTTP_CONFIG_SECRET_MIN_LENGTH + " characters", "http_config");
+		}
+	}
+
 	private void validateFilter() {
 		if ( this.filter != null )
 			return;
@@ -1345,6 +1378,7 @@ public class MaxwellConfig extends AbstractConfig {
 	public void validate() {
 		validatePartitionBy();
 		validateFilter();
+		validateHttpConfig();
 
 		if ( this.producerType.equals("kafka") ) {
 			if ( !this.kafkaProperties.containsKey("bootstrap.servers") ) {

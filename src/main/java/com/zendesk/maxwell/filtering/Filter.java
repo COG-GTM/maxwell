@@ -5,16 +5,17 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.*;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 
 public class Filter {
 	static final Logger LOGGER = LoggerFactory.getLogger(Filter.class);
 
-	private final List<FilterPattern> patterns;
+	private volatile List<FilterPattern> patterns;
 	private String maxwellDB;
 
 	public Filter() {
-		this.patterns = new ArrayList<>();
+		this.patterns = new CopyOnWriteArrayList<>();
 		this.maxwellDB = "maxwell";
 	}
 	public Filter(String filterString) throws InvalidFilterException {
@@ -37,8 +38,8 @@ public class Filter {
 
 	public void set(String filterString) throws InvalidFilterException {
 		List<FilterPattern> parsedFilter = new FilterParser(filterString).parse();
-		this.patterns.clear();
-		this.patterns.addAll(parsedFilter);
+		// swap atomically so the replicator thread never observes a half-applied (e.g. empty) filter
+		this.patterns = new CopyOnWriteArrayList<>(parsedFilter);
 	}
 
 	public boolean isSystemWhitelisted(String database, String table) {

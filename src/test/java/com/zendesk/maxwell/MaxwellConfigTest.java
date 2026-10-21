@@ -66,6 +66,33 @@ public class MaxwellConfigTest
 	}
 
 	@Test
+	public void testHttpConfigDefaultsToLoopbackBind() {
+		config = new MaxwellConfig(new String[] { "--http_config=true", "--http_config_secret=0123456789abcdef" });
+		assertTrue(config.enableHttpConfig);
+		assertEquals("0123456789abcdef", config.httpConfigSecret);
+		assertNull(config.httpBindAddress);
+		assertEquals("127.0.0.1", config.getEffectiveHttpBindAddress());
+	}
+
+	@Test
+	public void testHttpConfigKeepsExplicitBindAddress() {
+		config = new MaxwellConfig(new String[] { "--http_config=true", "--http_config_secret=0123456789abcdef", "--http_bind_address=0.0.0.0" });
+		assertEquals("0.0.0.0", config.getEffectiveHttpBindAddress());
+	}
+
+	@Test
+	public void testHttpDiagnosticDefaultsToLoopbackBind() {
+		config = new MaxwellConfig(new String[] { "--http_diagnostic=true" });
+		assertEquals("127.0.0.1", config.getEffectiveHttpBindAddress());
+	}
+
+	@Test
+	public void testBindAddressUnchangedWithoutHttpConfig() {
+		config = new MaxwellConfig(new String[] { "--metrics_type=http" });
+		assertNull(config.getEffectiveHttpBindAddress());
+	}
+
+	@Test
 	public void testEnvVarConfigViaOption() {
 		environmentVariables.set("MAXWELL_USER", "foo");
 		environmentVariables.set("maxwell_password", "bar");

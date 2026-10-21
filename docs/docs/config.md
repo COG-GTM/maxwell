@@ -227,7 +227,7 @@ metrics_jvm              | BOOLEAN                             | enable jvm metr
 metrics_slf4j_interval   | SECONDS                             | the frequency metrics are emitted to the log, in seconds, when slf4j reporting is configured | 60
 http_port                | INT                                 | the port the server will bind to when http reporting is configured | 8080
 http_path_prefix         | STRING                              | http path prefix for the server | /
-http_bind_address        | STRING                              | the address the server will bind to when http reporting is configured | all addresses
+http_bind_address        | STRING                              | the address the server will bind to when http reporting is configured | all addresses (127.0.0.1 when `http_config` or `http_diagnostic` is enabled)
 http_diagnostic          | BOOLEAN                             | enable http diagnostic endpoint | false
 http_diagnostic_timeout  | MILLISECONDS                        | the http diagnostic response timeout| 10000
 metrics_datadog_type     | [udp &#124; http] | when metrics_type includes `datadog` this is the way metrics will be reported, can only be one of [udp &#124; http] | udp
@@ -249,7 +249,8 @@ bootstrapper                   | [async &#124; sync &#124; none]                
 init_position                  | FILE:POSITION[:HEARTBEAT]           | ignore the information in maxwell.positions and start at the given binlog position. Not available in config.properties. [see note](/deployment#-init_position)|
 replay                         | BOOLEAN                             | enable maxwell's read-only "replay" mode: don't store a binlog position or schema changes.  Not available in config.properties. |
 buffer_memory_usage            | FLOAT                               | Determines how much memory the Maxwell event buffer will use from the jvm max memory. Size of the buffer is: buffer_memory_usage * -Xmx" | 0.25
-http_config                    | BOOLEAN                             | enable http config endpoint for config updates without restart | false
+http_config                    | BOOLEAN                             | enable http config endpoint for config updates without restart. Requires `http_config_secret` | false
+http_config_secret             | STRING                              | shared secret (16+ characters) that callers of the http config endpoint must send as `Authorization: Bearer <secret>` |
 binlog_event_queue_size        | INT                                 | Size of queue to buffer events parsed from binlog   | 5000
 
 
@@ -307,8 +308,27 @@ this would be equivalent to passing `--user=auser`.
 
 ## via PATCH: /config
 If `http_config` is set to true in config.properties or in the environment,
-the endpoint /config will be exposed. Currently only filter updates are supported,
-and a filter can be updated with a request in the following format
+the endpoint /config will be exposed. Maxwell refuses to start with `http_config`
+enabled unless `http_config_secret` (at least 16 characters) is also set, and every
+request to /config (including GET) must carry the secret as a bearer token:
+
+```
+Authorization: Bearer <http_config_secret>
+```
+
+Requests without a valid token receive a `401`. When `http_config` is enabled and
+`http_bind_address` is not set, the http server binds to `127.0.0.1` only; set
+`http_bind_address` explicitly to expose it on other interfaces.
+
+Currently only filter updates are supported. Filters submitted over http are limited
+to 8KB, and regexes prone to catastrophic backtracking are rejected: nested quantifiers
+(e.g. `/(a+)+/`), back-to-back unbounded quantifiers (e.g. `/a*a*/`, `/\s*\w+/`) and more
+than 3 unbounded quantifiers in one pattern.
+
+The bearer token is sent in clear text, since the http server does not speak TLS. If you
+set `http_bind_address` to a non-loopback address, only expose it on a trusted network or
+behind a TLS-terminating proxy.
+A filter can be updated with a request in the following format
 
 `PATCH: /config`
 ```json
