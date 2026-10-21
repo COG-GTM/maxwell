@@ -58,9 +58,15 @@ bin/maxwell --user='maxwell' --password='XXXXXX' --host='127.0.0.1' --producer=s
 
 ## Docker
 ```
-docker run -it --rm osheroff/maxwell bin/maxwell --user=$MYSQL_USERNAME \
-    --password=$MYSQL_PASSWORD --host=$MYSQL_HOST --producer=stdout
+docker run -it --rm -e MYSQL_USERNAME -e MYSQL_PASSWORD -e MYSQL_HOST \
+    -e MAXWELL_PRODUCER=stdout osheroff/maxwell
 ```
+
+The image's default command (`bin/maxwell-docker`) hands `MYSQL_USERNAME`,
+`MYSQL_PASSWORD` and `MYSQL_HOST` to Maxwell through the environment (see
+[env_config_prefix](config.md#via-environment)) instead of the command line,
+so the password is not visible to other users via `ps`. Extra options go in
+`MAXWELL_OPTIONS`. Avoid passing `--password` on the command line.
 
 ## Kafka
 
@@ -74,15 +80,15 @@ bin/maxwell --user='maxwell' --password='XXXXXX' --host='127.0.0.1' \
 (or docker):
 
 ```
-docker run -it --rm osheroff/maxwell bin/maxwell --user=$MYSQL_USERNAME \
-    --password=$MYSQL_PASSWORD --host=$MYSQL_HOST --producer=kafka \
-    --kafka.bootstrap.servers=$KAFKA_HOST:$KAFKA_PORT --kafka_topic=maxwell
+docker run -it --rm -e MYSQL_USERNAME -e MYSQL_PASSWORD -e MYSQL_HOST \
+    -e MAXWELL_PRODUCER=kafka -e KAFKA_BROKERS=$KAFKA_HOST:$KAFKA_PORT \
+    -e MAXWELL_OPTIONS="--kafka_topic=maxwell" osheroff/maxwell
 ```
 
 ## Kinesis
 
 ```
-docker run -it --rm --name maxwell -v `cd && pwd`/.aws:/root/.aws osheroff/maxwell sh -c 'cp /app/kinesis-producer-library.properties.example /app/kinesis-producer-library.properties && echo "Region=$AWS_DEFAULT_REGION" >> /app/kinesis-producer-library.properties && bin/maxwell --user=$MYSQL_USERNAME --password=$MYSQL_PASSWORD --host=$MYSQL_HOST --producer=kinesis --kinesis_stream=$KINESIS_STREAM'
+docker run -it --rm --name maxwell -v `cd && pwd`/.aws:/root/.aws -e MYSQL_USERNAME -e MYSQL_PASSWORD -e MYSQL_HOST -e AWS_DEFAULT_REGION -e MAXWELL_PRODUCER=kinesis -e MAXWELL_OPTIONS="--kinesis_stream=$KINESIS_STREAM" osheroff/maxwell sh -c 'cp /app/kinesis-producer-library.properties.example /app/kinesis-producer-library.properties && echo "Region=$AWS_DEFAULT_REGION" >> /app/kinesis-producer-library.properties && bin/maxwell-docker'
 ```
 
 ## Nats

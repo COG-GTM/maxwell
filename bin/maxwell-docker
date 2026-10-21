@@ -1,14 +1,61 @@
 #!/bin/bash
 
-MAXWELL_PRODUCER=${MAXWELL_PRODUCER:-kafka}
+MAXWELL_PRODUCER="${MAXWELL_PRODUCER:-kafka}"
+
+# MAXWELL_OPTIONS is a free-form option string; split it on whitespace without
+# glob expansion.
+read -r -a maxwell_options <<< "${MAXWELL_OPTIONS:-}"
 
 if [ "$MAXWELL_PRODUCER" == "kafka" ]
 then
-  if [ -z "$KAFKA_BROKERS" ]
+  if [ -z "${KAFKA_BROKERS:-}" ]
   then
-    KAFKA_BROKERS="$KAFKA_HOST:$KAFKA_PORT"
+    KAFKA_BROKERS="${KAFKA_HOST:-}:${KAFKA_PORT:-}"
   fi
-  MAXWELL_OPTIONS="$MAXWELL_OPTIONS --kafka.bootstrap.servers=$KAFKA_BROKERS"
+  maxwell_options+=("--kafka.bootstrap.servers=$KAFKA_BROKERS")
 fi
 
-exec `dirname $0`/maxwell  --user=$MYSQL_USERNAME --password=$MYSQL_PASSWORD --host=$MYSQL_HOST --producer=$MAXWELL_PRODUCER $MAXWELL_OPTIONS
+# MySQL connection settings are handed to Maxwell as env_config_prefix-scoped
+# environment variables rather than --user/--password/--host arguments, so the
+# password never shows up in the JVM's world-readable command line (ps, /proc/<pid>/cmdline).
+config_file="config.properties"
+env_prefix=""
+for ((i = 0; i < ${#maxwell_options[@]}; i++))
+do
+  case "${maxwell_options[$i]}" in
+    --env_config_prefix=*) env_prefix="${maxwell_options[$i]#*=}" ;;
+    --env_config_prefix)   env_prefix="${maxwell_options[$((i + 1))]:-}" ;;
+    --config=*)            config_file="${maxwell_options[$i]#*=}" ;;
+    --config)              config_file="${maxwell_options[$((i + 1))]:-}" ;;
+  esac
+done
+
+if [ -z "$env_prefix" ] && [ -f "$config_file" ]
+then
+  env_prefix="$(sed -n -E 's/^[[:space:]]*env_config_prefix[[:space:]]*[=:][[:space:]]*([^[:space:]]*).*$/\1/p' "$config_file" | tail -n 1)"
+fi
+
+if [ -z "$env_prefix" ]
+then
+  env_prefix="MAXWELL_DOCKER_CONFIG_"
+  maxwell_options=("--env_config_prefix=$env_prefix" "${maxwell_options[@]}")
+fi
+
+if ! [[ "$env_prefix" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]
+then
+  echo "maxwell-docker: env_config_prefix '$env_prefix' is not a valid environment variable prefix" >&2
+  exit 1
+fi
+
+export_config() {
+  if [ -n "$2" ]
+  then
+    export "${env_prefix}$1=$2"
+  fi
+}
+
+export_config user "${MYSQL_USERNAME:-}"
+export_config password "${MYSQL_PASSWORD:-}"
+export_config host "${MYSQL_HOST:-}"
+
+exec "$(dirname "$0")/maxwell" --producer="$MAXWELL_PRODUCER" "${maxwell_options[@]}"
