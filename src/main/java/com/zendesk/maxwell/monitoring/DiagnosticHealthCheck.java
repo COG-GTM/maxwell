@@ -51,7 +51,9 @@ public class DiagnosticHealthCheck extends HttpServlet {
 	private final LongSupplier nanoTime;
 	// at most one run at a time: while a run is stuck (e.g. blocked on a MySQL write) new runs are refused
 	private final AtomicBoolean running = new AtomicBoolean(false);
-	private volatile Runnable abortActiveRun;
+	private final Object runLock = new Object();
+	private Runnable abortActiveRun;
+	private boolean destroyed;
 	protected transient ObjectMapper mapper;
 
 	private final Object lock = new Object();
@@ -77,9 +79,11 @@ public class DiagnosticHealthCheck extends HttpServlet {
 
 	@Override
 	public void destroy() {
-		Runnable abort = abortActiveRun;
-		if (abort != null) {
-			abort.run();
+		synchronized (runLock) {
+			destroyed = true;
+			if (abortActiveRun != null) {
+				abortActiveRun.run();
+			}
 		}
 		super.destroy();
 	}
@@ -197,7 +201,9 @@ public class DiagnosticHealthCheck extends HttpServlet {
 			} catch (Throwable t) {
 				error = t;
 			} finally {
-				abortActiveRun = null;
+				synchronized (runLock) {
+					abortActiveRun = null;
+				}
 				// cleared before the result is published, so a completed run never blocks the next one
 				running.set(false);
 			}
@@ -214,8 +220,14 @@ public class DiagnosticHealthCheck extends HttpServlet {
 			abandoned.set(true);
 			thread.interrupt();
 		};
-		abortActiveRun = abort;
-		thread.start();
+		synchronized (runLock) {
+			if (destroyed) {
+				running.set(false);
+				return failedResult("diagnostic endpoint is shutting down");
+			}
+			abortActiveRun = abort;
+			thread.start();
+		}
 
 		try {
 			return run.get(runDeadlineMs(), TimeUnit.MILLISECONDS);

@@ -257,6 +257,16 @@ public class DiagnosticHealthCheckTest {
 	}
 
 	@Test
+	public void testNoRunStartsAfterDestroy() throws Exception {
+		FakeDiagnostic diagnostic = new FakeDiagnostic(false);
+		DiagnosticHealthCheck servlet = servlet(config(null, 0), diagnostic, System::nanoTime);
+		servlet.destroy();
+
+		assertFalse(servlet.currentResult().isSuccess());
+		assertThat(diagnostic.runs.get(), is(0));
+	}
+
+	@Test
 	public void testWallClockRollbackDoesNotFreezeCache() throws Exception {
 		FakeDiagnostic diagnostic = new FakeDiagnostic(false);
 		Ticker ticker = new Ticker();
