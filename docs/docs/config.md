@@ -55,6 +55,7 @@ producer_ack_timeout           | [PRODUCER_ACK_TIMEOUT](#ack_timeout) | time in 
 producer_partition_by          | [PARTITION_BY](#partition_by)       | input to kafka/kinesis/sns/sqs partition function           | database
 producer_partition_columns     | STRING                              | if partitioning by 'column', a comma separated list of columns |
 producer_partition_by_fallback | [PARTITION_BY_FALLBACK](#partition_by_fallback) | required when producer_partition_by=column.  Used when the column is missing |
+topic_escape_identifiers       | BOOLEAN                             | reversibly escape separator characters in `%{database}`/`%{table}`/`%{type}` values so that different tables never share a topic, key, subject or ordering key. See [topic substitution](/producers/#topic-substitution) | false
 ignore_producer_error          | BOOLEAN              | When false, Maxwell will terminate on kafka/kinesis/pubsub publish errors (aside from RecordTooLargeException). When true, errors are only logged. See also dead_letter_topic | true
 
 ## file producer

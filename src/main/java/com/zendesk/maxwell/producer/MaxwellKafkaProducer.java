@@ -15,6 +15,7 @@ import com.zendesk.maxwell.util.StoppableTaskState;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.kafka.clients.producer.*;
 import org.apache.kafka.common.KafkaException;
+import org.apache.kafka.common.errors.InvalidTopicException;
 import org.apache.kafka.common.errors.RecordTooLargeException;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.slf4j.Logger;
@@ -137,6 +138,7 @@ public class MaxwellKafkaProducer extends AbstractProducer {
 
 class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnable, StoppableTask {
 	static final Logger LOGGER = LoggerFactory.getLogger(MaxwellKafkaProducer.class);
+	static final int MAX_TOPIC_LENGTH = 249;
 
 	private final Producer<String, String> kafka;
 	private final String topic;
@@ -150,6 +152,8 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 	private String deadLetterTopic;
 	private final ConcurrentLinkedQueue<Pair<ProducerRecord<String, String>, KafkaCallback>> deadLetterQueue;
 	private final TopicInterpolator topicInterpolator;
+	private final boolean escapeTopicIdentifiers;
+	private final TopicInterpolator deadLetterTopicInterpolator;
 
 	public static MaxwellKafkaPartitioner makeDDLPartitioner(String partitionHashFunc, String partitionKey) {
 		if (partitionKey.equals("table")) {
@@ -169,7 +173,8 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 			this.topic = kafkaTopic;
 		}
 
-		this.topicInterpolator = new TopicInterpolator(this.topic);
+		this.escapeTopicIdentifiers = context.getConfig().topicEscapeIdentifiers;
+		this.topicInterpolator = new TopicInterpolator(this.topic, this.escapeTopicIdentifiers);
 		this.kafka = producer;
 
 		String hash = context.getConfig().kafkaPartitionHash;
@@ -181,6 +186,7 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 		this.ddlPartitioner = makeDDLPartitioner(hash, partitionKey);
 		this.ddlTopic = context.getConfig().ddlKafkaTopic;
 		this.deadLetterTopic = context.getConfig().deadLetterTopic;
+		this.deadLetterTopicInterpolator = this.deadLetterTopic == null ? null : new TopicInterpolator(this.deadLetterTopic, this.escapeTopicIdentifiers);
 		this.deadLetterQueue = new ConcurrentLinkedQueue<>();
 
 		if (context.getConfig().kafkaKeyFormat.equals("hash"))
@@ -194,8 +200,16 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 
 	public MaxwellKafkaProducerWorker(MaxwellContext context, Properties kafkaProperties, String kafkaTopic,
 									  ArrayBlockingQueue<RowMap> queue) {
-		this(context, kafkaTopic, queue,
-				new KafkaProducer<String, String>(kafkaProperties, new StringSerializer(), new StringSerializer()));
+		this(context, kafkaTopic, queue, makeKafkaProducer(context, kafkaTopic, kafkaProperties));
+	}
+
+	private static Producer<String, String> makeKafkaProducer(MaxwellContext context, String kafkaTopic, Properties kafkaProperties) {
+		// reject invalid topic templates before a kafka client is opened that nothing would close
+		boolean escape = context.getConfig().topicEscapeIdentifiers;
+		new TopicInterpolator(kafkaTopic == null ? "maxwell" : kafkaTopic, escape);
+		if (context.getConfig().deadLetterTopic != null)
+			new TopicInterpolator(context.getConfig().deadLetterTopic, escape);
+		return new KafkaProducer<String, String>(kafkaProperties, new StringSerializer(), new StringSerializer());
 	}
 
 	@Override
@@ -226,6 +240,9 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 	}
 
 	private Integer getNumPartitions(String topic) {
+		if (topic.length() > MAX_TOPIC_LENGTH)
+			throw new InvalidTopicException("Topic '" + topic + "' is longer than " + MAX_TOPIC_LENGTH + " characters");
+
 		try {
 			return this.kafka.partitionsFor(topic).size(); //returns 1 for new topics
 		} catch (KafkaException e) {
@@ -236,16 +253,28 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 
 	@Override
 	public void sendAsync(RowMap r, AbstractAsyncProducer.CallbackCompleter cc) throws Exception {
-		ProducerRecord<String, String> record = makeProducerRecord(r);
+		ProducerRecord<String, String> record;
+		try {
+			record = makeProducerRecord(r);
+		} catch (InvalidTopicException e) {
+			// a table/database name can produce a topic kafka refuses; handle it like a failed send
+			// (dead letter topic / ignore_producer_error) instead of crashing on every replay of the row
+			makeCallback(r, cc, null).onCompletion(null, e);
+			// we're on the worker thread, so send any fallback record now rather than waiting for the next row
+			drainDeadLetterQueue();
+			return;
+		}
 
 		/* if debug logging isn't enabled, release the reference to `value`, which can ease memory pressure somewhat */
 		String value = KafkaCallback.LOGGER.isDebugEnabled() ? record.value() : null;
 
-		KafkaCallback callback = new KafkaCallback(cc, r.getNextPosition(), r.getRowIdentity(), value,
+		sendAsync(record, makeCallback(r, cc, value));
+	}
+
+	private KafkaCallback makeCallback(RowMap r, AbstractAsyncProducer.CallbackCompleter cc, String value) {
+		return new KafkaCallback(cc, r.getNextPosition(), r.getRowIdentity(), value,
 				this.succeededMessageCount, this.failedMessageCount, this.succeededMessageMeter, this.failedMessageMeter,
 				this.topic, this.deadLetterTopic, this.context, this);
-
-		sendAsync(record, callback);
 	}
 
 	public void enqueueFallbackRow(String topic, RowIdentity fallbackRecord, KafkaCallback callback, RecordMetadata md, Exception reason) {
@@ -276,7 +305,7 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 			// javascript topic override
 			topic = r.getKafkaTopic();
 			if (topic == null) {
-				topic = this.topicInterpolator.generateFromRowMap(r);
+				topic = this.topicInterpolator.generateKafkaTopicFromRowMap(r);
 			}
 			LOGGER.debug("context.getConfig().producerPartitionKey = {}",  context.getConfig().producerPartitionKey);
 
@@ -288,7 +317,10 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 	ProducerRecord<String, String> makeFallbackRecord(String fallbackTopic, final RowIdentity pk, Exception reason) throws Exception {
 		String key = pk.toKeyJson(keyFormat);
 		String value = pk.toFallbackValueWithReason(reason.getClass().getSimpleName());
-		String topic = new TopicInterpolator(fallbackTopic).generateFromRowIdentity(pk) ;
+		TopicInterpolator interpolator = this.deadLetterTopicInterpolator != null && fallbackTopic.equals(this.deadLetterTopic)
+			? this.deadLetterTopicInterpolator
+			: new TopicInterpolator(fallbackTopic, this.escapeTopicIdentifiers);
+		String topic = interpolator.generateKafkaTopicFromRowIdentity(pk);
 		return new ProducerRecord<>(topic, key, value);
 	}
 
