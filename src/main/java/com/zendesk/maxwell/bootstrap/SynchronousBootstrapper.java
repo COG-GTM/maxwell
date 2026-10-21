@@ -32,7 +32,7 @@ import java.util.stream.Collectors;
  * Does the bulk of the actual bootstrapping work
  */
 public class SynchronousBootstrapper {
-	class BootstrapAbortException extends Exception {
+	static class BootstrapAbortException extends Exception {
 		public BootstrapAbortException(String message) {
 			super(message);
 		}
@@ -68,6 +68,22 @@ public class SynchronousBootstrapper {
 		completeBootstrap(task, producer);
 	}
 
+	/**
+	 * Give up on a task that keeps failing: mark it complete so it leaves the queue.
+	 *
+	 * @param task   the bootstrap task
+	 * @param reason why the task is being abandoned, for the log
+	 * @throws Exception if the bootstrap row can't be updated
+	 */
+	public void abandonBootstrap(BootstrapTask task, String reason) throws Exception {
+		LOGGER.error("Bootstrap (id={}) abandoned: {}", task.id, reason);
+		try {
+			setBootstrapRowToCompleted(0, task.id);
+		} catch ( NoSuchElementException e ) {
+			LOGGER.info("bootstrap row for {} is gone, nothing to abandon", task.logString());
+		}
+	}
+
 	private Schema captureSchemaForBootstrap(BootstrapTask task) throws SQLException {
 		try ( Connection cx = getConnection(task.database) ) {
 			CaseSensitivity s = MaxwellMysqlStatus.captureCaseSensitivity(cx);
@@ -84,8 +100,23 @@ public class SynchronousBootstrapper {
 			throw new BootstrapAbortException(e.getMessage());
 		}
 
+		return findTableForTask(schema, task);
+	}
+
+	/**
+	 * Look up a task's table in a captured schema.
+	 *
+	 * The database can be missing too: it may not exist, or it may be one that
+	 * SchemaCapturer never captures (information_schema, performance_schema...).
+	 *
+	 * @param schema schema captured for the task
+	 * @param task the bootstrap task
+	 * @return the table to bootstrap
+	 * @throws BootstrapAbortException if the database or table doesn't exist
+	 */
+	static Table findTableForTask(Schema schema, BootstrapTask task) throws BootstrapAbortException {
 		Database database = schema.findDatabase(task.database);
-		Table table = database.findTable(task.table);
+		Table table = database == null ? null : database.findTable(task.table);
 
 		if ( table == null ) {
 			String errMsg = String.format(
