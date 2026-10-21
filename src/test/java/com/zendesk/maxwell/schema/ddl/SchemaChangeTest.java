@@ -23,6 +23,21 @@ public class SchemaChangeTest {
 	}
 
 	@Test
+	public void testStripSetStatementEscapedQuotes() {
+		assertThat(SchemaChange.stripForBlacklist("SET STATEMENT s='it''s' FOR DROP EVENT e"), is("DROP EVENT e"));
+		assertThat(SchemaChange.stripForBlacklist("SET STATEMENT s='it\\'s' FOR DROP EVENT e"), is("DROP EVENT e"));
+		assertThat(SchemaChange.stripForBlacklist("SET STATEMENT s=\"a\"\"b\" FOR DROP EVENT e"), is("DROP EVENT e"));
+		assertThat(SchemaChange.stripForBlacklist("SET STATEMENT s=\"a\\\"b\", t='' FOR DROP EVENT e"), is("DROP EVENT e"));
+		assertThat(SchemaChange.stripForBlacklist("SET STATEMENT s='a\\\\' FOR DROP EVENT e"), is("DROP EVENT e"));
+	}
+
+	@Test(timeout = 5000)
+	public void testSetStatementUnterminatedQuoteBacktracking() {
+		SchemaChange.stripForBlacklist("SET STATEMENT a='" + repeat("\\'''x", 100000));
+		SchemaChange.stripForBlacklist("SET STATEMENT a=\"" + repeat("\\\"\"\"x", 100000));
+	}
+
+	@Test
 	public void testSetStatementOnlyStrippedAtStart() {
 		String sql = "CREATE TABLE t (id int) COMMENT 'SET STATEMENT a=1 FOR x'";
 		assertThat(SchemaChange.stripForBlacklist(sql), is(sql));

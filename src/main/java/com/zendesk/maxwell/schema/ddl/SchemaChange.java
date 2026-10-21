@@ -22,7 +22,8 @@ public abstract class SchemaChange {
 	private static final Set<Pattern> SQL_BLACKLIST = new HashSet<Pattern>();
 
 	// Every pattern applied to raw DDL must run in linear time: anchored, possessive, no back-references.
-	private static final String SET_STATEMENT_ASSIGNMENT = "\\w++\\s*+=\\s*+(?:'[^']*+'|\"[^\"]*+\"|\\w++)";
+	private static final String SET_STATEMENT_ASSIGNMENT =
+		"\\w++\\s*+=\\s*+(?:'(?:[^'\\\\]|\\\\[\\s\\S]|'')*+'|\"(?:[^\"\\\\]|\\\\[\\s\\S]|\"\")*+\"|\\w++)";
 	private static final Pattern SET_STATEMENT = Pattern.compile(
 		"\\A\\s*+SET\\s++STATEMENT\\s++" + SET_STATEMENT_ASSIGNMENT
 			+ "(?:\\s*+,\\s*+" + SET_STATEMENT_ASSIGNMENT + ")*+\\s*+FOR\\s++",
