@@ -67,6 +67,7 @@ In this async mode, non-bootstrapped tables are replicated as normal by the main
 * then events with `type = "bootstrap-insert"` (one per row in the table)
 * then one event per `INSERT`, `UPDATE` or `DELETE` with standard event types i.e. `type = "insert"`, `type = "update"` or `type = "delete"` that occurred since the beginning of bootstrap
 * finally an event with `type = "bootstrap-complete"`
+* if the bootstrap fails after `bootstrap-start` was sent (e.g. the SELECT errors part-way through), an event with `type = "bootstrap-abort"` is sent instead of `bootstrap-complete`; the rows received since `bootstrap-start` are an incomplete snapshot. Maxwell retries a failing bootstrap up to 3 times (each retry starts again with `bootstrap-start`) and then marks it complete.
 
 Here's a complete example:
 ```

@@ -93,13 +93,14 @@ public class BootstrapController extends RunLoopProcess  {
 	}
 
 	/**
-	 * Run a single bootstrap task.  A failing task never escapes this method:
-	 * buffered live rows are always released, and after MAX_TASK_ATTEMPTS
+	 * Run a single bootstrap task.  A task-specific failure never escapes this
+	 * method: buffered live rows are always released, and after MAX_TASK_ATTEMPTS
 	 * consecutive failures the task is aborted (marked complete) so that one
 	 * bad maxwell.bootstrap row can't stop replication or starve other tasks.
+	 * Producer delivery failures are not the task's fault and are rethrown.
 	 *
 	 * @param task the task to run
-	 * @throws Exception on interruption, a duplicate maxwell process, or a failure to release buffered rows
+	 * @throws Exception on interruption, a duplicate maxwell process, a producer delivery failure, or a failure to release buffered rows
 	 */
 	void runTask(BootstrapTask task) throws Exception {
 		if (LOGGER.isDebugEnabled()) {
@@ -112,7 +113,7 @@ public class BootstrapController extends RunLoopProcess  {
 		try {
 			bootstrapper.startBootstrap(task, producer, getCurrentSchemaID());
 			taskFailures.remove(task.id);
-		} catch ( InterruptedException | DuplicateProcessException e ) {
+		} catch ( InterruptedException | DuplicateProcessException | BootstrapDeliveryException e ) {
 			throw e;
 		} catch ( Exception e ) {
 			handleTaskFailure(task, e);
@@ -134,7 +135,7 @@ public class BootstrapController extends RunLoopProcess  {
 		try {
 			bootstrapper.abortBootstrap(task, "giving up after " + failures + " failed attempts: " + e);
 			taskFailures.remove(task.id);
-		} catch ( InterruptedException | DuplicateProcessException abortError ) {
+		} catch ( InterruptedException | DuplicateProcessException | BootstrapDeliveryException abortError ) {
 			throw abortError;
 		} catch ( Exception abortError ) {
 			LOGGER.error("could not mark bootstrap task {} as aborted", task.logString(), abortError);

@@ -121,4 +121,20 @@ public class BootstrapControllerTest {
 
 		controller.runTask(task);
 	}
+
+	@Test
+	public void testDeliveryFailurePropagatesWithoutAbortingTask() throws Exception {
+		BootstrapDeliveryException deliveryError = new BootstrapDeliveryException(new java.io.IOException("disk full"));
+		doThrow(deliveryError).when(bootstrapper).startBootstrap(eq(task), any(), anyLong());
+
+		for ( int i = 0; i < BootstrapController.MAX_TASK_ATTEMPTS + 1; i++ ) {
+			try {
+				controller.runTask(task);
+				org.junit.Assert.fail("expected BootstrapDeliveryException");
+			} catch ( BootstrapDeliveryException e ) {
+				assertTrue(e == deliveryError);
+			}
+		}
+		verify(bootstrapper, never()).abortBootstrap(any(), anyString());
+	}
 }
