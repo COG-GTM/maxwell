@@ -94,7 +94,7 @@ public class RabbitmqProducerTest {
 	public void amqpsUriRejectsTrustedCertificateForAnotherHost() throws Exception {
 		MaxwellConfig config = new MaxwellConfig();
 		try ( FakeTlsBroker broker = new FakeTlsBroker(wrongHostKeystore, null) ) {
-			config.rabbitmqURI = "AMQPS://localhost:" + broker.port();
+			config.rabbitmqURI = "amqps://localhost:" + broker.port();
 			config.rabbitmqSslTruststore = wrongHostTruststore.getAbsolutePath();
 			config.rabbitmqSslTruststorePassword = PASSWORD;
 
