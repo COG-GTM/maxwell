@@ -8,10 +8,6 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.PrintWriter;
 import java.io.StringWriter;
-import java.time.Clock;
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -21,6 +17,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.LongSupplier;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -73,27 +70,16 @@ public class DiagnosticHealthCheckTest {
 		}
 	}
 
-	private static class MutableClock extends Clock {
-		long millis = 1_000_000L;
+	private static class Ticker implements LongSupplier {
+		volatile long nanos = 1_000_000_000L;
 
 		@Override
-		public ZoneId getZone() {
-			return ZoneOffset.UTC;
+		public long getAsLong() {
+			return nanos;
 		}
 
-		@Override
-		public Clock withZone(ZoneId zone) {
-			return this;
-		}
-
-		@Override
-		public Instant instant() {
-			return Instant.ofEpochMilli(millis);
-		}
-
-		@Override
-		public long millis() {
-			return millis;
+		void advanceMillis(long millis) {
+			nanos += TimeUnit.MILLISECONDS.toNanos(millis);
 		}
 	}
 
@@ -118,40 +104,75 @@ public class DiagnosticHealthCheckTest {
 		return config;
 	}
 
-	private static DiagnosticHealthCheck servlet(MaxwellDiagnosticContext.Config config, MaxwellDiagnostic diagnostic, Clock clock) throws Exception {
+	private static DiagnosticHealthCheck servlet(MaxwellDiagnosticContext.Config config, MaxwellDiagnostic diagnostic, LongSupplier ticker) throws Exception {
 		DiagnosticHealthCheck servlet = new DiagnosticHealthCheck(
-				new MaxwellDiagnosticContext(config, Collections.singletonList(diagnostic)), clock);
+				new MaxwellDiagnosticContext(config, Collections.singletonList(diagnostic)), ticker);
 		servlet.init(servlet);
 		return servlet;
 	}
 
 	private static HttpServletRequest request(String authorization) {
+		return request(authorization, "10.1.2.3");
+	}
+
+	private static HttpServletRequest request(String authorization, String remoteAddr) {
 		HttpServletRequest request = mock(HttpServletRequest.class);
 		when(request.getHeader("Authorization")).thenReturn(authorization);
+		when(request.getRemoteAddr()).thenReturn(remoteAddr);
 		return request;
 	}
 
 	@Test
-	public void testAnonymousResponseIsRedactedWhenNoTokenConfigured() throws Exception {
+	public void testLoopbackResponseIsRedactedWhenNoTokenConfigured() throws Exception {
 		FakeDiagnostic diagnostic = new FakeDiagnostic(true);
-		DiagnosticHealthCheck servlet = servlet(config(null, 0), diagnostic, Clock.systemUTC());
+		DiagnosticHealthCheck servlet = servlet(config(null, 0), diagnostic, System::nanoTime);
 
-		Response response = new Response();
-		servlet.doGet(request(null), response.servletResponse);
+		for (String loopback : new String[] { "127.0.0.1", "0:0:0:0:0:0:0:1" }) {
+			Response response = new Response();
+			servlet.doGet(request(null, loopback), response.servletResponse);
 
-		verify(response.servletResponse).setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
-		JsonNode check = response.check();
-		assertThat(check.get("name").asText(), is("fake"));
-		assertFalse(check.has("resource"));
-		assertThat(check.get("error").asText(), is("check failed, see maxwell logs for details"));
-		assertFalse(response.body.toString().contains("10.0.0.5"));
-		assertFalse(response.body.toString().contains("db-internal"));
+			verify(response.servletResponse).setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+			JsonNode check = response.check();
+			assertThat(check.get("name").asText(), is("fake"));
+			assertFalse(check.has("resource"));
+			assertFalse(check.has("error"));
+			assertThat(check.get("message").asText(), is("check failed, see maxwell logs for details"));
+			assertFalse(response.body.toString().contains("10.0.0.5"));
+			assertFalse(response.body.toString().contains("db-internal"));
+		}
+	}
+
+	@Test
+	public void testRedactionDropsCheckMessages() throws Exception {
+		Map<String, String> info = new HashMap<>();
+		info.put("message", "connected to db-internal.example:3306 as maxwell");
+		MaxwellDiagnosticResult.Check check = new MaxwellDiagnosticResult.Check("fake", true, true, "db-internal.example:3306", info);
+
+		MaxwellDiagnosticResult.Check redacted = check.redacted();
+
+		assertThat(redacted.getInfo().get("message"), is("ok"));
+		assertThat(redacted.getInfo().size(), is(1));
+		assertThat(redacted.getResource(), is((String) null));
+	}
+
+	@Test
+	public void testRemoteAnonymousCallerIsRejectedWhenNoTokenConfigured() throws Exception {
+		FakeDiagnostic diagnostic = new FakeDiagnostic(false);
+		DiagnosticHealthCheck servlet = servlet(config(null, 0), diagnostic, System::nanoTime);
+
+		for (String remote : new String[] { "10.1.2.3", "192.168.1.10", "", null }) {
+			Response response = new Response();
+			servlet.doGet(request(null, remote), response.servletResponse);
+			verify(response.servletResponse).setStatus(HttpServletResponse.SC_FORBIDDEN);
+			verify(response.servletResponse, never()).getWriter();
+		}
+		assertThat(diagnostic.runs.get(), is(0));
 	}
 
 	@Test
 	public void testMissingOrWrongTokenIsRejectedWithoutRunningChecks() throws Exception {
 		FakeDiagnostic diagnostic = new FakeDiagnostic(false);
-		DiagnosticHealthCheck servlet = servlet(config("s3cret-token", 0), diagnostic, Clock.systemUTC());
+		DiagnosticHealthCheck servlet = servlet(config("s3cret-token", 0), diagnostic, System::nanoTime);
 
 		for (String header : new String[] { null, "Bearer wrong", "Basic s3cret-token", "Bearer s3cret-token-longer" }) {
 			Response response = new Response();
@@ -165,7 +186,7 @@ public class DiagnosticHealthCheckTest {
 	@Test
 	public void testValidTokenGetsFullDetails() throws Exception {
 		FakeDiagnostic diagnostic = new FakeDiagnostic(true);
-		DiagnosticHealthCheck servlet = servlet(config("s3cret-token", 0), diagnostic, Clock.systemUTC());
+		DiagnosticHealthCheck servlet = servlet(config("s3cret-token", 0), diagnostic, System::nanoTime);
 
 		Response response = new Response();
 		servlet.doGet(request("Bearer s3cret-token"), response.servletResponse);
@@ -180,24 +201,73 @@ public class DiagnosticHealthCheckTest {
 	@Test
 	public void testResultsAreCachedForMinInterval() throws Exception {
 		FakeDiagnostic diagnostic = new FakeDiagnostic(false);
-		MutableClock clock = new MutableClock();
-		DiagnosticHealthCheck servlet = servlet(config(null, 5000), diagnostic, clock);
+		Ticker ticker = new Ticker();
+		DiagnosticHealthCheck servlet = servlet(config("s3cret-token", 5000), diagnostic, ticker);
 
 		for (int i = 0; i < 20; i++) {
 			Response response = new Response();
-			servlet.doGet(request(null), response.servletResponse);
+			servlet.doGet(request("Bearer s3cret-token"), response.servletResponse);
 			verify(response.servletResponse).setStatus(HttpServletResponse.SC_OK);
 			assertThat(response.check().get("message").asText(), is("lag is 3ms"));
 		}
 		assertThat(diagnostic.runs.get(), is(1));
 
-		clock.millis += 4999;
+		ticker.advanceMillis(4999);
 		servlet.currentResult();
 		assertThat(diagnostic.runs.get(), is(1));
 
-		clock.millis += 1;
+		ticker.advanceMillis(1);
 		servlet.currentResult();
 		assertThat(diagnostic.runs.get(), is(2));
+	}
+
+	@Test
+	public void testWallClockRollbackDoesNotFreezeCache() throws Exception {
+		FakeDiagnostic diagnostic = new FakeDiagnostic(false);
+		Ticker ticker = new Ticker();
+		DiagnosticHealthCheck servlet = servlet(config(null, 5000), diagnostic, ticker);
+
+		servlet.currentResult();
+		ticker.advanceMillis(5000);
+		servlet.currentResult();
+		assertThat(diagnostic.runs.get(), is(2));
+	}
+
+	@Test
+	public void testStuckRunDoesNotBlockLaterRequestsAndIsNotRestarted() throws Exception {
+		CountDownLatch release = new CountDownLatch(1);
+		AtomicInteger blockingRuns = new AtomicInteger();
+		MaxwellDiagnostic blocking = new FakeDiagnostic(false) {
+			@Override
+			public CompletableFuture<MaxwellDiagnosticResult.Check> check() {
+				blockingRuns.incrementAndGet();
+				try {
+					// e.g. a synchronous MySQL write that hangs; ignores interrupts like a stuck socket would
+					while (!release.await(10, TimeUnit.SECONDS)) { }
+				} catch (InterruptedException e) {
+					try { release.await(); } catch (InterruptedException ignored) { }
+				}
+				return super.check();
+			}
+		};
+		MaxwellDiagnosticContext.Config config = config(null, 0);
+		config.timeout = 100;
+		DiagnosticHealthCheck servlet = servlet(config, blocking, System::nanoTime);
+
+		long start = System.nanoTime();
+		MaxwellDiagnosticResult first = servlet.currentResult();
+		assertFalse(first.isSuccess());
+		assertTrue(System.nanoTime() - start < TimeUnit.SECONDS.toNanos(5));
+
+		MaxwellDiagnosticResult second = servlet.currentResult();
+		assertFalse(second.isSuccess());
+		assertThat(second.getChecks().get(0).getInfo().get("message"), is("previous diagnostic run is still in progress"));
+		assertThat(blockingRuns.get(), is(1));
+
+		release.countDown();
+		Thread.sleep(200);
+		servlet.currentResult();
+		assertThat(blockingRuns.get(), is(2));
 	}
 
 	@Test
@@ -205,7 +275,7 @@ public class DiagnosticHealthCheckTest {
 		FakeDiagnostic diagnostic = new FakeDiagnostic(false);
 		CompletableFuture<MaxwellDiagnosticResult.Check> gate = new CompletableFuture<>();
 		diagnostic.next = gate;
-		DiagnosticHealthCheck servlet = servlet(config(null, 5000), diagnostic, Clock.systemUTC());
+		DiagnosticHealthCheck servlet = servlet(config(null, 5000), diagnostic, System::nanoTime);
 
 		int callers = 8;
 		CountDownLatch done = new CountDownLatch(callers);

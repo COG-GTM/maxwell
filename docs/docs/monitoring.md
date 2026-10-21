@@ -38,8 +38,9 @@ When the HTTP server is enabled the following endpoints are exposed:
 | `/diagnostic`  | when `http_diagnostic=true`, write a heartbeat and (for kafka) send a probe message to `http_diagnostic_kafka_topic` to measure replication and producer latency |
 
 `/diagnostic` has side effects, so runs are shared between concurrent callers and cached for `http_diagnostic_min_interval`.
-Set `http_diagnostic_token` to require `Authorization: Bearer <token>`; without it the endpoint answers anyone but
-omits the MySQL/Kafka addresses and error details. Consider also setting `http_bind_address` to a private interface.
+Set `http_diagnostic_token` to require `Authorization: Bearer <token>`; without it the endpoint only answers loopback
+callers and omits the MySQL/Kafka addresses and error details. The HTTP server does not terminate TLS, so the token is sent
+in clear text: set `http_bind_address` to a private interface and/or put a TLS-terminating proxy in front of it.
 
 ## Custom Health Check
 Similar to the custom producer, developers can provide their own implementation of a health check.

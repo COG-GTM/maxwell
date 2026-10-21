@@ -357,7 +357,8 @@ kafka.acks=1
 # Diagnostic check timeout in milliseconds, required if diagnostic = true
 #http_diagnostic_timeout=10000 # default 10000
 
-# Bearer token required to call /diagnostic. Without it, responses omit hosts and error details.
+# Bearer token required to call /diagnostic. Without it, only loopback callers are served and
+# responses omit hosts and error details. Sent in clear text: bind to a private interface or use a TLS proxy.
 #http_diagnostic_token=
 
 # Minimum milliseconds between two diagnostic runs; requests in between get the cached result

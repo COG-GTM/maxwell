@@ -29,6 +29,8 @@ import static org.mockito.Mockito.when;
 
 public class DiagnosticMaxwellTest extends MaxwellTestWithIsolatedServer {
 
+	private static final String TOKEN = "diagnostic-test-token";
+
 	private class MaxwellWithContext extends Maxwell {
 
 		public MaxwellWithContext(MaxwellContext context) throws SQLException, URISyntaxException {
@@ -57,11 +59,13 @@ public class DiagnosticMaxwellTest extends MaxwellTestWithIsolatedServer {
 		// Given
 		MaxwellDiagnosticContext.Config config = new MaxwellDiagnosticContext.Config();
 		config.timeout = 5000;
+		config.token = TOKEN;
 		MaxwellContext maxwellContext = buildContext();
 
 		DiagnosticHealthCheck healthCheck = getDiagnosticHealthCheck(config, maxwellContext);
 
 		HttpServletRequest request = mock(HttpServletRequest.class);
+		when(request.getHeader("Authorization")).thenReturn("Bearer " + TOKEN);
 		HttpServletResponse response = mock(HttpServletResponse.class);
 		when(response.getWriter()).thenReturn(writer);
 
@@ -93,11 +97,13 @@ public class DiagnosticMaxwellTest extends MaxwellTestWithIsolatedServer {
 		// Given
 		MaxwellDiagnosticContext.Config config = new MaxwellDiagnosticContext.Config();
 		config.timeout = 100;
+		config.token = TOKEN;
 		MaxwellContext maxwellContext = buildContext();
 
 		DiagnosticHealthCheck healthCheck = getDiagnosticHealthCheck(config, maxwellContext);
 
 		HttpServletRequest request = mock(HttpServletRequest.class);
+		when(request.getHeader("Authorization")).thenReturn("Bearer " + TOKEN);
 		HttpServletResponse response = mock(HttpServletResponse.class);
 		when(response.getWriter()).thenReturn(writer);
 

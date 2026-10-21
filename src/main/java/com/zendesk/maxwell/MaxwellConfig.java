@@ -1357,9 +1357,9 @@ public class MaxwellConfig extends AbstractConfig {
 				usageForOptions("http_diagnostic_min_interval must be >= 0", "http_diagnostic_min_interval");
 			}
 
-			if ( this.diagnosticConfig.enable && this.diagnosticConfig.kafkaTopic != null
-					&& this.diagnosticConfig.kafkaTopic.equals(this.kafkaTopic) ) {
-				usageForOptions("http_diagnostic_kafka_topic must not be the CDC topic (kafka_topic)", "http_diagnostic_kafka_topic");
+			if ( this.diagnosticConfig.enable && "kafka".equals(this.producerType)
+					&& (this.diagnosticConfig.kafkaTopicMayMatch(this.kafkaTopic) || this.diagnosticConfig.kafkaTopicMayMatch(this.ddlKafkaTopic)) ) {
+				usageForOptions("http_diagnostic_kafka_topic must not be, or match, a CDC topic (kafka_topic / ddl_kafka_topic)", "http_diagnostic_kafka_topic");
 			}
 		}
 

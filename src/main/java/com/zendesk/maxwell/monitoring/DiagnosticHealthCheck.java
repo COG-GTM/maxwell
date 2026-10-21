@@ -11,23 +11,33 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.time.Clock;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
 
 /**
  * Runs the registered {@link MaxwellDiagnostic}s. Diagnostics have side effects (heartbeat writes,
- * kafka probe messages), so runs are single-flight and cached for {@code http_diagnostic_min_interval},
- * and callers without the configured {@code http_diagnostic_token} are rejected (or, when no token is
- * configured, get a redacted result).
+ * kafka probe messages), so:
+ * <ul>
+ *   <li>callers must present {@code http_diagnostic_token}; when no token is configured only loopback
+ *   callers are served, and they get a redacted result</li>
+ *   <li>runs are single-flight, bounded by {@code http_diagnostic_timeout}, and cached for
+ *   {@code http_diagnostic_min_interval}</li>
+ * </ul>
  */
 public class DiagnosticHealthCheck extends HttpServlet {
 
@@ -37,23 +47,31 @@ public class DiagnosticHealthCheck extends HttpServlet {
 	private static final String CACHE_CONTROL = "Cache-Control";
 	private static final String NO_CACHE = "must-revalidate,no-cache,no-store";
 	private static final String BEARER_PREFIX = "Bearer ";
+	static final long RUN_GRACE_MS = 1000L;
 
 	private final MaxwellDiagnosticContext diagnosticContext;
-	private final Clock clock;
+	private final LongSupplier nanoTime;
+	private final ThreadPoolExecutor runner;
 	protected transient ObjectMapper mapper;
 
 	private final Object lock = new Object();
 	private CompletableFuture<MaxwellDiagnosticResult> inFlight;
 	private MaxwellDiagnosticResult lastResult;
-	private long lastResultAt;
+	private long lastResultAtNanos;
 
 	public DiagnosticHealthCheck(MaxwellDiagnosticContext diagnosticContext) {
-		this(diagnosticContext, Clock.systemUTC());
+		this(diagnosticContext, System::nanoTime);
 	}
 
-	DiagnosticHealthCheck(MaxwellDiagnosticContext diagnosticContext, Clock clock) {
+	DiagnosticHealthCheck(MaxwellDiagnosticContext diagnosticContext, LongSupplier nanoTime) {
 		this.diagnosticContext = diagnosticContext;
-		this.clock = clock;
+		this.nanoTime = nanoTime;
+		// a single runner and no queue: while a run is stuck (e.g. blocked on a MySQL write) new runs are refused
+		this.runner = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS, new SynchronousQueue<>(), r -> {
+			Thread t = new Thread(r, "maxwell-diagnostic");
+			t.setDaemon(true);
+			return t;
+		});
 	}
 
 	@Override
@@ -64,14 +82,25 @@ public class DiagnosticHealthCheck extends HttpServlet {
 	}
 
 	@Override
+	public void destroy() {
+		runner.shutdownNow();
+		super.destroy();
+	}
+
+	@Override
 	protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
 		resp.setHeader(CACHE_CONTROL, NO_CACHE);
 		resp.setContentType(CONTENT_TYPE);
 
 		boolean tokenRequired = diagnosticContext.config.isTokenRequired();
-		if (tokenRequired && !isAuthorized(req)) {
-			resp.setHeader("WWW-Authenticate", "Bearer realm=\"maxwell-diagnostic\"");
-			resp.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+		if (tokenRequired) {
+			if (!isAuthorized(req)) {
+				resp.setHeader("WWW-Authenticate", "Bearer realm=\"maxwell-diagnostic\"");
+				resp.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+				return;
+			}
+		} else if (!isLoopback(req)) {
+			resp.setStatus(HttpServletResponse.SC_FORBIDDEN);
 			return;
 		}
 
@@ -100,11 +129,25 @@ public class DiagnosticHealthCheck extends HttpServlet {
 		return MessageDigest.isEqual(presented, expected);
 	}
 
+	private static boolean isLoopback(HttpServletRequest req) {
+		String remote = req.getRemoteAddr();
+		if (remote == null || remote.isEmpty()) {
+			return false;
+		}
+		try {
+			// getRemoteAddr is an IP literal, so this does not hit DNS
+			return InetAddress.getByName(remote).isLoopbackAddress();
+		} catch (UnknownHostException e) {
+			return false;
+		}
+	}
+
 	MaxwellDiagnosticResult currentResult() {
 		CompletableFuture<MaxwellDiagnosticResult> pending;
 		boolean leader = false;
 		synchronized (lock) {
-			if (lastResult != null && clock.millis() - lastResultAt < diagnosticContext.config.minInterval) {
+			long minIntervalNanos = TimeUnit.MILLISECONDS.toNanos(diagnosticContext.config.minInterval);
+			if (lastResult != null && nanoTime.getAsLong() - lastResultAtNanos < minIntervalNanos) {
 				return lastResult;
 			}
 			if (inFlight == null) {
@@ -115,28 +158,18 @@ public class DiagnosticHealthCheck extends HttpServlet {
 		}
 
 		if (leader) {
-			MaxwellDiagnosticResult result = null;
-			try {
-				result = runChecks();
-				return result;
-			} finally {
-				synchronized (lock) {
-					if (result != null) {
-						lastResult = result;
-						lastResultAt = clock.millis();
-					}
-					inFlight = null;
-				}
-				if (result != null) {
-					pending.complete(result);
-				} else {
-					pending.completeExceptionally(new IllegalStateException("diagnostic run failed"));
-				}
+			MaxwellDiagnosticResult result = runBounded();
+			synchronized (lock) {
+				lastResult = result;
+				lastResultAtNanos = nanoTime.getAsLong();
+				pending.complete(result);
+				inFlight = null;
 			}
+			return result;
 		}
 
 		try {
-			return pending.get(diagnosticContext.config.timeout, TimeUnit.MILLISECONDS);
+			return pending.get(runDeadlineMs(), TimeUnit.MILLISECONDS);
 		} catch (InterruptedException e) {
 			Thread.currentThread().interrupt();
 			return failedResult("diagnostic run was interrupted");
@@ -145,14 +178,47 @@ public class DiagnosticHealthCheck extends HttpServlet {
 		}
 	}
 
+	private long runDeadlineMs() {
+		return diagnosticContext.config.timeout + RUN_GRACE_MS;
+	}
+
+	private MaxwellDiagnosticResult runBounded() {
+		Future<MaxwellDiagnosticResult> run;
+		try {
+			run = runner.submit(this::runChecks);
+		} catch (RejectedExecutionException e) {
+			LOGGER.warn("previous diagnostic run is still in progress, not starting a new one");
+			return failedResult("previous diagnostic run is still in progress");
+		}
+
+		try {
+			return run.get(runDeadlineMs(), TimeUnit.MILLISECONDS);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			run.cancel(true);
+			return failedResult("diagnostic run was interrupted");
+		} catch (TimeoutException e) {
+			run.cancel(true);
+			LOGGER.warn("diagnostic run did not return after " + runDeadlineMs() + " ms");
+			return failedResult("check did not return after " + diagnosticContext.config.timeout + " ms");
+		} catch (ExecutionException e) {
+			LOGGER.warn("diagnostic run failed", e.getCause());
+			return failedResult("diagnostic run failed");
+		}
+	}
+
 	private MaxwellDiagnosticResult runChecks() {
+		long timeoutNanos = TimeUnit.MILLISECONDS.toNanos(diagnosticContext.config.timeout);
+		long deadline = nanoTime.getAsLong() + timeoutNanos;
+
 		Map<MaxwellDiagnostic, CompletableFuture<MaxwellDiagnosticResult.Check>> futureChecks = diagnosticContext.diagnostics.stream()
 				.collect(Collectors.toMap(diagnostic -> diagnostic, MaxwellDiagnostic::check));
 
 		List<MaxwellDiagnosticResult.Check> checks = futureChecks.entrySet().stream().map(future -> {
 			CompletableFuture<MaxwellDiagnosticResult.Check> futureCheck = future.getValue();
 			try {
-				return futureCheck.get(diagnosticContext.config.timeout, TimeUnit.MILLISECONDS);
+				long remaining = Math.max(0L, deadline - nanoTime.getAsLong());
+				return futureCheck.get(remaining, TimeUnit.NANOSECONDS);
 			} catch (InterruptedException | ExecutionException | TimeoutException e) {
 				if (e instanceof InterruptedException) {
 					Thread.currentThread().interrupt();

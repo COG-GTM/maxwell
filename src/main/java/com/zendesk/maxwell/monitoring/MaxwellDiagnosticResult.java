@@ -30,13 +30,15 @@ public class MaxwellDiagnosticResult {
 	}
 
 	/**
-	 * @return a copy safe to return to unauthenticated callers: no resources, no raw error text
+	 * @return a copy safe to return to unauthenticated callers: only name, status and a fixed message
 	 */
 	public MaxwellDiagnosticResult redacted() {
 		return new MaxwellDiagnosticResult(checks.stream().map(Check::redacted).collect(Collectors.toList()));
 	}
 
 	public static class Check {
+		static final String REDACTED_FAILURE = "check failed, see maxwell logs for details";
+
 		private final String name;
 		private final boolean success;
 		private final boolean mandatory;
@@ -57,14 +59,7 @@ public class MaxwellDiagnosticResult {
 
 		public Check redacted() {
 			Map<String, String> redactedInfo = new HashMap<>();
-			if (info != null) {
-				if (info.containsKey("message")) {
-					redactedInfo.put("message", info.get("message"));
-				}
-				if (info.containsKey("error")) {
-					redactedInfo.put("error", "check failed, see maxwell logs for details");
-				}
-			}
+			redactedInfo.put("message", success ? "ok" : REDACTED_FAILURE);
 			return new Check(name, success, mandatory, null, redactedInfo);
 		}
 
