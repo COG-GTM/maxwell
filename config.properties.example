@@ -58,7 +58,7 @@ password=maxwell
 #
 # turns on ssl for the maxwell-store connection, other connections inherit this setting unless specified
 #ssl=DISABLED
-# for binlog-connector
+# for binlog-connector (applies even when replication_host is not set)
 #replication_ssl=DISABLED
 # for the schema-capture connection, if used
 #schema_ssl=DISABLED

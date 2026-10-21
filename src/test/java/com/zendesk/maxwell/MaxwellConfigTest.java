@@ -2,6 +2,7 @@ package com.zendesk.maxwell;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.shyiko.mysql.binlog.network.SSLMode;
 import com.google.common.collect.ImmutableMap;
 import com.zendesk.maxwell.monitoring.MaxwellHealthCheck;
 import com.zendesk.maxwell.monitoring.MaxwellHealthCheckFactory;
@@ -48,6 +49,50 @@ public class MaxwellConfigTest
 		config = new MaxwellConfig(new String[] { "--custom_health.factory=" + TestHealthCheckFactory.class.getName() });
 		assertNotNull(config.customHealthFactory);
 		assertTrue(config.customHealthFactory instanceof TestHealthCheckFactory);
+	}
+
+	@Test
+	public void testReplicationSslKeptWithoutReplicationHost() {
+		config = new MaxwellConfig(new String[] { "--host=db", "--user=maxwell", "--password=pw", "--replication_ssl=VERIFY_IDENTITY" });
+		config.validate();
+		assertEquals(SSLMode.DISABLED, config.maxwellMysql.sslMode);
+		assertEquals(SSLMode.VERIFY_IDENTITY, config.replicationMysql.sslMode);
+		assertEquals("db", config.replicationMysql.host);
+		assertEquals("maxwell", config.replicationMysql.user);
+	}
+
+	@Test
+	public void testReplicationSslInheritsSslWithoutReplicationHost() {
+		config = new MaxwellConfig(new String[] { "--host=db", "--user=maxwell", "--password=pw", "--ssl=REQUIRED" });
+		config.validate();
+		assertEquals(SSLMode.REQUIRED, config.replicationMysql.sslMode);
+	}
+
+	@Test
+	public void testReplicationJdbcOptionsMergedWithoutReplicationHost() {
+		config = new MaxwellConfig(new String[] {
+			"--host=db", "--user=maxwell", "--password=pw",
+			"--jdbc_options=socketTimeout=10&connectTimeout=9000",
+			"--replication_jdbc_options=socketTimeout=20&trustCertificateKeyStoreUrl=file:/ks&connectTimeout=5000"
+		});
+		config.validate();
+		assertEquals("20", config.replicationMysql.jdbcOptions.get("socketTimeout"));
+		assertEquals("file:/ks", config.replicationMysql.jdbcOptions.get("trustCertificateKeyStoreUrl"));
+		assertEquals("5000", config.replicationMysql.jdbcOptions.get("connectTimeout"));
+		assertEquals("9000", config.maxwellMysql.jdbcOptions.get("connectTimeout"));
+		assertEquals("10", config.maxwellMysql.jdbcOptions.get("socketTimeout"));
+		assertNull(config.maxwellMysql.jdbcOptions.get("trustCertificateKeyStoreUrl"));
+	}
+
+	@Test
+	public void testReplicationSslWithReplicationHost() {
+		config = new MaxwellConfig(new String[] {
+			"--host=db", "--user=maxwell", "--password=pw", "--ssl=REQUIRED",
+			"--replication_host=replica", "--replication_user=repl", "--replication_password=rpw"
+		});
+		config.validate();
+		assertEquals("replica", config.replicationMysql.host);
+		assertEquals(SSLMode.REQUIRED, config.replicationMysql.sslMode);
 	}
 
 	@Test(expected = OptionException.class)

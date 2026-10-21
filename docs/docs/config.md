@@ -35,7 +35,7 @@ replication_host               | STRING               | server to replicate from
 replication_password           | STRING               | password on replication server                      | (none)
 replication_port               | INT                  | port on replication server                          | 3306
 replication_user               | STRING               | user on replication server                          |
-replication_ssl                | [SSL_OPT](#sslopt)   | SSL behavior for replication cx cx                  | DISABLED
+replication_ssl                | [SSL_OPT](#sslopt)   | SSL behavior for replication cx cx. Applies even when replication_host is unset | *ssl*
 replication_jdbc_options       | STRING               | mysql jdbc connection options for replication server| [DEFAULT_JDBC_OPTS](#jdbcopts)
 &nbsp;
 schema_host                    | STRING               | server to capture schema from.  See [split server roles](#split-server-roles) | *schema-store host*

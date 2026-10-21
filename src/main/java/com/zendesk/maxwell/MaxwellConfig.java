@@ -50,6 +50,11 @@ public class MaxwellConfig extends AbstractConfig {
 	public MaxwellMysqlConfig replicationMysql;
 
 	/**
+	 * Raw replication_jdbc_options, applied on top of {@link #maxwellMysql}'s options when replication_host is unset
+	 */
+	private String replicationJdbcOptions;
+
+	/**
 	 * Number of times to attempt connecting the replicator before giving up
 	 */
 	public int replicationReconnectionRetries;
@@ -1072,6 +1077,7 @@ public class MaxwellConfig extends AbstractConfig {
 
 		this.maxwellMysql       = parseMysqlConfig("", options, properties);
 		this.replicationMysql   = parseMysqlConfig("replication_", options, properties);
+		this.replicationJdbcOptions = fetchStringOption("replication_jdbc_options", options, properties, null);
 		this.schemaMysql        = parseMysqlConfig("schema_", options, properties);
 		this.gtidMode           = fetchBooleanOption("gtid_mode", options, properties, System.getenv(GTID_MODE_ENV) != null);
 
@@ -1432,17 +1438,25 @@ public class MaxwellConfig extends AbstractConfig {
 				usageForOptions("Please specify all of: replication_host, replication_user, replication_password", "--replication");
 			}
 
+			MaxwellMysqlConfig explicitReplication = this.replicationMysql;
+			SSLMode replicationSslMode = explicitReplication.sslMode != null ? explicitReplication.sslMode : this.maxwellMysql.sslMode;
+
 			this.replicationMysql = new MaxwellMysqlConfig(
 				this.maxwellMysql.host,
 				this.maxwellMysql.port,
 				null,
 				this.maxwellMysql.user,
 				this.maxwellMysql.password,
-				this.maxwellMysql.sslMode,
+				replicationSslMode,
 				this.maxwellMysql.enableHeartbeat
 			);
 
-			this.replicationMysql.jdbcOptions = this.maxwellMysql.jdbcOptions;
+			this.replicationMysql.jdbcOptions = new HashMap<>(this.maxwellMysql.jdbcOptions);
+			this.replicationMysql.setJDBCOptions(this.replicationJdbcOptions);
+
+			if ( explicitReplication.sslMode != null && explicitReplication.sslMode != this.maxwellMysql.sslMode ) {
+				LOGGER.info("replication_host not set; replicating from maxwell host with replication_ssl={}", replicationSslMode);
+			}
 		}
 
 		if (this.replicationMysql.sslMode == null) {
