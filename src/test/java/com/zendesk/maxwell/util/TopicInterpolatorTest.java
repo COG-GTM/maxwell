@@ -288,12 +288,20 @@ public class TopicInterpolatorTest {
 	}
 
 	@Test
+	public void escapedNamesDoNotCollideAroundAlphanumericLiterals() {
+		TopicInterpolator topic = new TopicInterpolator("%{database}_x%{table}", true);
+		assertThat(topic.generateKafkaTopicFromRowMap(rowMap("a", "xb")), equalTo("a_xxb"));
+		assertThat(topic.generateKafkaTopicFromRowMap(rowMap("a_x", "b")), equalTo("a-5Fx_xb"));
+		assertThat(topic.generateKafkaTopicFromRowMap(rowMap("a", "x_b")), equalTo("a_xx-5Fb"));
+	}
+
+	@Test
 	public void escapedInterpolationIsInjective() {
 		String[] templates = {
 			"namespace_%{database}_%{table}", "ns%{database}_%{table}", "a_%{database}.%{table}",
 			"x-%{database}", "%{database}_x%{table}", "%{database}.%{table}.%{type}", "p:%{database}:%{table}"
 		};
-		char[] alphabet = {'a', '_', '.', '-', ':', '%', '5', 'F', '$', '\\', '\u00e9'};
+		char[] alphabet = {'a', 'x', '_', '.', '-', ':', '%', '5', 'F', '$', '\\', '\u00e9'};
 		List<String> values = new ArrayList<>();
 		values.add("");
 		for (int len = 1; len <= 2; len++) {

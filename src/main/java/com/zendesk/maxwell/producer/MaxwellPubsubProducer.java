@@ -152,6 +152,10 @@ class MaxwellPubsubProducerWorker
                                      throws IOException {
     super(context);
 
+    this.messageOrderingKeyInterpolator = pubsubMessageOrderingKey == null
+      ? null
+      : new TopicInterpolator(pubsubMessageOrderingKey, context.getConfig().topicEscapeIdentifiers).validateForCleanUp();
+
     // Publish request get triggered based on request size, messages count & time since last publish
     BatchingSettings batchingSettings =
     BatchingSettings.newBuilder()
@@ -200,10 +204,6 @@ class MaxwellPubsubProducerWorker
       this.ddlPubsub = this.pubsub;
     }
 
-
-    this.messageOrderingKeyInterpolator = pubsubMessageOrderingKey == null
-      ? null
-      : new TopicInterpolator(pubsubMessageOrderingKey, context.getConfig().topicEscapeIdentifiers).validateForCleanUp();
 
     Metrics metrics = context.getMetrics();
 

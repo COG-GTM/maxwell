@@ -200,8 +200,16 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 
 	public MaxwellKafkaProducerWorker(MaxwellContext context, Properties kafkaProperties, String kafkaTopic,
 									  ArrayBlockingQueue<RowMap> queue) {
-		this(context, kafkaTopic, queue,
-				new KafkaProducer<String, String>(kafkaProperties, new StringSerializer(), new StringSerializer()));
+		this(context, kafkaTopic, queue, makeKafkaProducer(context, kafkaTopic, kafkaProperties));
+	}
+
+	private static Producer<String, String> makeKafkaProducer(MaxwellContext context, String kafkaTopic, Properties kafkaProperties) {
+		// reject invalid topic templates before a kafka client is opened that nothing would close
+		boolean escape = context.getConfig().topicEscapeIdentifiers;
+		new TopicInterpolator(kafkaTopic == null ? "maxwell" : kafkaTopic, escape);
+		if (context.getConfig().deadLetterTopic != null)
+			new TopicInterpolator(context.getConfig().deadLetterTopic, escape);
+		return new KafkaProducer<String, String>(kafkaProperties, new StringSerializer(), new StringSerializer());
 	}
 
 	@Override
