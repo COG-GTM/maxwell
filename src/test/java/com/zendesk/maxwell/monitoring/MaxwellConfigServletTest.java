@@ -69,6 +69,17 @@ public class MaxwellConfigServletTest {
 	}
 
 	@Test
+	public void testLongConfiguredTokenIsAccepted() throws Exception {
+		StringBuilder token = new StringBuilder();
+		while ( token.length() < MaxwellConfigServlet.MAX_AUTHORIZATION_LENGTH + 500 )
+			token.append('t');
+		config.httpConfigToken = token.toString();
+		servlet.service(request("POST", "{\"filter\":\"include: a.b\"}", "Bearer " + token), resp);
+		verify(resp).setStatus(200);
+		assertEquals("include: a.b", filter.toString());
+	}
+
+	@Test
 	public void testOversizedBodyReturns413() throws Exception {
 		StringBuilder sb = new StringBuilder("{\"filter\":\"include: db./");
 		while ( sb.length() <= MaxwellConfigServlet.MAX_BODY_LENGTH )

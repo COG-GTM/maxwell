@@ -93,7 +93,8 @@ public class MaxwellConfigServlet extends HttpServlet {
 			return true;
 
 		String header = req.getHeader("Authorization");
-		if ( header == null || header.length() > MAX_AUTHORIZATION_LENGTH || !header.regionMatches(true, 0, "Bearer ", 0, 7) )
+		int maxHeaderLength = Math.max(MAX_AUTHORIZATION_LENGTH, token.length() + 64);
+		if ( header == null || header.length() > maxHeaderLength || !header.regionMatches(true, 0, "Bearer ", 0, 7) )
 			return false;
 
 		byte[] presented = header.substring(7).trim().getBytes(StandardCharsets.UTF_8);
