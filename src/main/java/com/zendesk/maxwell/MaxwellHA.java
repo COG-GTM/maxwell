@@ -1,6 +1,10 @@
 package com.zendesk.maxwell;
 
 import org.jgroups.JChannel;
+import org.jgroups.protocols.AUTH;
+import org.jgroups.protocols.Encrypt;
+import org.jgroups.protocols.UDP;
+import org.jgroups.stack.ProtocolStack;
 import org.jgroups.protocols.raft.Role;
 import org.jgroups.raft.RaftHandle;
 import org.slf4j.Logger;
@@ -47,6 +51,19 @@ public class MaxwellHA {
 		}
 	}
 
+	static boolean warnIfInsecure(ProtocolStack stack) {
+		boolean encrypted = stack.findProtocol(Encrypt.class) != null;
+		boolean authenticated = stack.findProtocol(AUTH.class) != null;
+		boolean multicast = stack.findProtocol(UDP.class) != null;
+		if ( encrypted && authenticated && !multicast )
+			return false;
+
+		LOGGER.warn("HA cluster config is insecure (encrypt=" + encrypted + ", auth=" + authenticated
+			+ ", udp_multicast=" + multicast + "): any host that can reach the cluster network can join"
+			+ " the raft election and stop or flap replication. See raft.xml.example and docs/high_availability.md.");
+		return true;
+	}
+
 	/**
 	 * Join the raft cluster, starting and stopping Maxwell on elections.
 	 *
@@ -55,6 +72,7 @@ public class MaxwellHA {
 	 */
 	public void startHA() throws Exception {
 		JChannel ch=new JChannel(jgroupsConf);
+		warnIfInsecure(ch.getProtocolStack());
 		RaftHandle handle=new RaftHandle(ch, null);
 		if ( raftMemberID != null )
 			handle.raftId(raftMemberID);

@@ -16,3 +16,5 @@ config/*.yml
 .vscode/
 .factorypath
 .sts4-cache/
+/raft.xml
+*.keystore
