@@ -14,10 +14,12 @@
     * an RSA key pair + certificate under alias "maxwell-raft-auth" (AUTH)
   See docs/docs/high_availability.md for keytool commands.
 
-  Secrets are not stored in this file; pass them as JVM system properties, e.g.
+  Secrets are not stored in this file.  The keystore password and AUTH value
+  are read from environment variables, which (unlike JVM -D arguments) are not
+  visible to other local users in the process list:
+    MAXWELL_RAFT_KEYSTORE_PASSWORD, MAXWELL_RAFT_AUTH_VALUE
+  Non-secret settings are JVM system properties, e.g.
     JAVA_OPTS="-Dmaxwell.raft.keystore=/etc/maxwell/raft.p12 \
-               -Dmaxwell.raft.keystore_password=... \
-               -Dmaxwell.raft.auth_value=... \
                -Djgroups.tcpping.initial_hosts=host1[7800],host2[7800],host3[7800]"
 
   This stack authenticates and encrypts cluster traffic but it is not a
@@ -39,18 +41,18 @@
                  sym_iv_length="16"
                  keystore_type="PKCS12"
                  keystore_name="${maxwell.raft.keystore:raft.p12}"
-                 store_password="${maxwell.raft.keystore_password}"
+                 store_password="${MAXWELL_RAFT_KEYSTORE_PASSWORD}"
                  alias="maxwell-raft-sym"/>
     <pbcast.NAKACK2 xmit_interval="500" use_mcast_xmit="false"/>
     <UNICAST3 xmit_interval="500"/>
     <pbcast.STABLE desired_avg_gossip="50000" max_bytes="4M"/>
     <raft.NO_DUPES/>
     <AUTH auth_class="org.jgroups.auth.X509Token"
-          auth_value="${maxwell.raft.auth_value}"
+          auth_value="${MAXWELL_RAFT_AUTH_VALUE}"
           keystore_type="PKCS12"
           keystore_path="${maxwell.raft.keystore:raft.p12}"
-          keystore_password="${maxwell.raft.keystore_password}"
-          cert_password="${maxwell.raft.keystore_password}"
+          keystore_password="${MAXWELL_RAFT_KEYSTORE_PASSWORD}"
+          cert_password="${MAXWELL_RAFT_KEYSTORE_PASSWORD}"
           cert_alias="maxwell-raft-auth"
           cipher_type="RSA"/>
     <pbcast.GMS print_local_addr="true" join_timeout="2000"/>

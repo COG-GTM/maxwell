@@ -40,14 +40,26 @@ the user running Maxwell (`chmod 600`).  Treat the keystore, its password and th
 
 ### Start the nodes
 
-The keystore location, its password, the `AUTH` shared value and the peer list
-are passed as JVM system properties, so that no secrets live in `raft.xml`.
-If a password is missing the node fails to start.
+The keystore password and the `AUTH` shared value are read from the
+`MAXWELL_RAFT_KEYSTORE_PASSWORD` and `MAXWELL_RAFT_AUTH_VALUE` environment
+variables, so that no secrets live in `raft.xml`.  If either is missing the node
+fails to start.  Don't pass secrets as `-D` JVM arguments: command lines are
+visible to every local user (`ps`), whereas a process's environment is only
+readable by its owner and root.  Load them from a file only the Maxwell user can
+read, e.g. a systemd `EnvironmentFile=` or:
 
 ```bash
+# /etc/maxwell/raft.env, mode 0600, owned by the maxwell user
+MAXWELL_RAFT_KEYSTORE_PASSWORD=...
+MAXWELL_RAFT_AUTH_VALUE=...
+```
+
+The keystore location and the peer list are not secret and are passed as JVM
+system properties:
+
+```bash
+set -a; . /etc/maxwell/raft.env; set +a
 export JAVA_OPTS="-Dmaxwell.raft.keystore=/etc/maxwell/raft.p12 \
-  -Dmaxwell.raft.keystore_password=$RAFT_KEYSTORE_PASSWORD \
-  -Dmaxwell.raft.auth_value=$RAFT_AUTH_VALUE \
   -Djgroups.tcpping.initial_hosts=host1[7800],host2[7800],host3[7800] \
   -Djava.net.preferIPv4Stack=true"
 

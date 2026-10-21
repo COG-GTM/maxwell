@@ -55,9 +55,9 @@ public class RaftExampleConfigTest {
 	@Test
 	public void testExampleDoesNotShipSecrets() throws Exception {
 		List<ProtocolConfiguration> stack = loadExampleStack();
-		assertEquals("${maxwell.raft.keystore_password}", find(stack, "SYM_ENCRYPT").getProperties().get("store_password"));
+		assertEquals("${MAXWELL_RAFT_KEYSTORE_PASSWORD}", find(stack, "SYM_ENCRYPT").getProperties().get("store_password"));
 		Map<String, String> authProps = find(stack, "AUTH").getProperties();
-		assertEquals("${maxwell.raft.auth_value}", authProps.get("auth_value"));
-		assertEquals("${maxwell.raft.keystore_password}", authProps.get("keystore_password"));
+		assertEquals("${MAXWELL_RAFT_AUTH_VALUE}", authProps.get("auth_value"));
+		assertEquals("${MAXWELL_RAFT_KEYSTORE_PASSWORD}", authProps.get("keystore_password"));
 	}
 }
