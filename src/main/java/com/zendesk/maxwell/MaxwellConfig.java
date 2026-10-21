@@ -50,6 +50,11 @@ public class MaxwellConfig extends AbstractConfig {
 	public MaxwellMysqlConfig replicationMysql;
 
 	/**
+	 * Raw replication_jdbc_options, applied on top of {@link #maxwellMysql}'s options when replication_host is unset
+	 */
+	private String replicationJdbcOptions;
+
+	/**
 	 * Number of times to attempt connecting the replicator before giving up
 	 */
 	public int replicationReconnectionRetries;
@@ -1072,6 +1077,7 @@ public class MaxwellConfig extends AbstractConfig {
 
 		this.maxwellMysql       = parseMysqlConfig("", options, properties);
 		this.replicationMysql   = parseMysqlConfig("replication_", options, properties);
+		this.replicationJdbcOptions = fetchStringOption("replication_jdbc_options", options, properties, null);
 		this.schemaMysql        = parseMysqlConfig("schema_", options, properties);
 		this.gtidMode           = fetchBooleanOption("gtid_mode", options, properties, System.getenv(GTID_MODE_ENV) != null);
 
@@ -1446,12 +1452,7 @@ public class MaxwellConfig extends AbstractConfig {
 			);
 
 			this.replicationMysql.jdbcOptions = new HashMap<>(this.maxwellMysql.jdbcOptions);
-			Map<String, String> defaultJdbcOptions = new MaxwellMysqlConfig().jdbcOptions;
-			for ( Map.Entry<String, String> opt : explicitReplication.jdbcOptions.entrySet() ) {
-				if ( !Objects.equals(defaultJdbcOptions.get(opt.getKey()), opt.getValue()) ) {
-					this.replicationMysql.jdbcOptions.put(opt.getKey(), opt.getValue());
-				}
-			}
+			this.replicationMysql.setJDBCOptions(this.replicationJdbcOptions);
 
 			if ( explicitReplication.sslMode != null && explicitReplication.sslMode != this.maxwellMysql.sslMode ) {
 				LOGGER.info("replication_host not set; replicating from maxwell host with replication_ssl={}", replicationSslMode);

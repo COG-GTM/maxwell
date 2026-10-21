@@ -73,12 +73,13 @@ public class MaxwellConfigTest
 		config = new MaxwellConfig(new String[] {
 			"--host=db", "--user=maxwell", "--password=pw",
 			"--jdbc_options=socketTimeout=10&connectTimeout=9000",
-			"--replication_jdbc_options=socketTimeout=20&trustCertificateKeyStoreUrl=file:/ks"
+			"--replication_jdbc_options=socketTimeout=20&trustCertificateKeyStoreUrl=file:/ks&connectTimeout=5000"
 		});
 		config.validate();
 		assertEquals("20", config.replicationMysql.jdbcOptions.get("socketTimeout"));
 		assertEquals("file:/ks", config.replicationMysql.jdbcOptions.get("trustCertificateKeyStoreUrl"));
-		assertEquals("9000", config.replicationMysql.jdbcOptions.get("connectTimeout"));
+		assertEquals("5000", config.replicationMysql.jdbcOptions.get("connectTimeout"));
+		assertEquals("9000", config.maxwellMysql.jdbcOptions.get("connectTimeout"));
 		assertEquals("10", config.maxwellMysql.jdbcOptions.get("socketTimeout"));
 		assertNull(config.maxwellMysql.jdbcOptions.get("trustCertificateKeyStoreUrl"));
 	}
