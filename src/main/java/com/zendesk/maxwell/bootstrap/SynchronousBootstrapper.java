@@ -32,9 +32,19 @@ import java.util.stream.Collectors;
  * Does the bulk of the actual bootstrapping work
  */
 public class SynchronousBootstrapper {
-	class BootstrapAbortException extends Exception {
+	static class BootstrapAbortException extends Exception {
 		public BootstrapAbortException(String message) {
 			super(message);
+		}
+	}
+
+	/**
+	 * The producer failed to accept a bootstrap row.  This is an output problem,
+	 * not a problem with the task itself.
+	 */
+	static class BootstrapProducerException extends Exception {
+		public BootstrapProducerException(Throwable cause) {
+			super(cause);
 		}
 	}
 
@@ -68,6 +78,23 @@ public class SynchronousBootstrapper {
 		completeBootstrap(task, producer);
 	}
 
+	/**
+	 * Give up on a task that keeps failing: mark it complete so it leaves the queue.
+	 * The caller is responsible for emitting bootstrap-complete first.
+	 *
+	 * @param task   the bootstrap task
+	 * @param reason why the task is being abandoned, for the log
+	 * @throws Exception if the bootstrap row can't be updated
+	 */
+	public void abandonBootstrap(BootstrapTask task, String reason) throws Exception {
+		LOGGER.error("Bootstrap (id={}) abandoned: {}", task.id, reason);
+		try {
+			setBootstrapRowToCompleted(0, task.id);
+		} catch ( NoSuchElementException e ) {
+			LOGGER.info("bootstrap row for {} is gone, nothing to abandon", task.logString());
+		}
+	}
+
 	private Schema captureSchemaForBootstrap(BootstrapTask task) throws SQLException {
 		try ( Connection cx = getConnection(task.database) ) {
 			CaseSensitivity s = MaxwellMysqlStatus.captureCaseSensitivity(cx);
@@ -84,8 +111,23 @@ public class SynchronousBootstrapper {
 			throw new BootstrapAbortException(e.getMessage());
 		}
 
+		return findTableForTask(schema, task);
+	}
+
+	/**
+	 * Look up a task's table in a captured schema.
+	 *
+	 * The database can be missing too: it may not exist, or it may be one that
+	 * SchemaCapturer never captures (information_schema, performance_schema...).
+	 *
+	 * @param schema schema captured for the task
+	 * @param task the bootstrap task
+	 * @return the table to bootstrap
+	 * @throws BootstrapAbortException if the database or table doesn't exist
+	 */
+	static Table findTableForTask(Schema schema, BootstrapTask task) throws BootstrapAbortException {
 		Database database = schema.findDatabase(task.database);
-		Table table = database.findTable(task.table);
+		Table table = database == null ? null : database.findTable(task.table);
 
 		if ( table == null ) {
 			String errMsg = String.format(
@@ -114,7 +156,7 @@ public class SynchronousBootstrapper {
 
 		Table table = getTableForTask(task);
 
-		producer.push(bootstrapStartRowMap(task, table));
+		push(producer, bootstrapStartRowMap(task, table));
 		LOGGER.info(String.format("bootstrapping started for %s.%s", task.database, task.table));
 
 		try ( Connection streamingConnection = getStreamingConnection(task.database)) {
@@ -134,7 +176,7 @@ public class SynchronousBootstrapper {
 				if ( LOGGER.isDebugEnabled() )
 					LOGGER.debug("bootstrapping row : {}", row.toJSON());
 
-				producer.push(row);
+				push(producer, row);
 				++insertedRows;
 
 				updateInsertedRowsColumn(insertedRows, task.id);
@@ -173,6 +215,16 @@ public class SynchronousBootstrapper {
 		return conn;
 	}
 
+	private static void push(AbstractProducer producer, RowMap row) throws InterruptedException, BootstrapProducerException {
+		try {
+			producer.push(row);
+		} catch ( InterruptedException e ) {
+			throw e;
+		} catch ( Exception e ) {
+			throw new BootstrapProducerException(e);
+		}
+	}
+
 	private RowMap bootstrapStartRowMap(BootstrapTask task, Table table) {
 		return bootstrapEventRowMap("bootstrap-start", table.database, table.name, table.getPKList(), task.comment);
 	}
@@ -197,7 +249,7 @@ public class SynchronousBootstrapper {
 	 * @throws Exception
 	 */
 	public void completeBootstrap(BootstrapTask task, AbstractProducer producer) throws Exception {
-		producer.push(bootstrapEventRowMap("bootstrap-complete", task.database, task.table, new ArrayList<>(), task.comment));
+		push(producer, bootstrapEventRowMap("bootstrap-complete", task.database, task.table, new ArrayList<>(), task.comment));
 		LOGGER.info("bootstrapping ended for " + task.logString());
 	}
 

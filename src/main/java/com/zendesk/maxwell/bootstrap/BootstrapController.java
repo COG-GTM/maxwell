@@ -14,7 +14,11 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Watches maxwell.bootstrap, starts and stops bootstrap tasks
@@ -64,20 +68,54 @@ public class BootstrapController extends RunLoopProcess  {
 	private BootstrapTask activeTask;
 	private RowMapBuffer skippedRows = new RowMapBuffer(MAX_TX_ELEMENTS);
 
+	static final int MAX_TASK_ATTEMPTS = 3;
+	static final long POLL_INTERVAL_MILLIS = 1000;
+	static final long MAX_RETRY_DELAY_MILLIS = 60000;
+
+	// failed attempts per task id; only touched from the run loop thread
+	private final Map<Long, Integer> taskFailures = new HashMap<>();
+	// abandoned tasks whose bootstrap-complete was already pushed, so retries don't push it again
+	private final Set<Long> abandonCompletionSent = new HashSet<>();
+	private int consecutiveFailedPasses = 0;
+
 	@Override
 	protected void work() throws Exception {
+		boolean failed;
 		try {
-			doWork();
+			failed = doWork();
 		} catch ( InterruptedException e ) {
+			return;
 		} catch ( SQLException e ) {
 			LOGGER.error("got SQLException trying to bootstrap", e);
+			failed = true;
+		}
+
+		try {
+			sleep(nextDelayMillis(failed));
+		} catch ( InterruptedException e ) {
 		}
 	}
 
-	private void doWork() throws Exception {
+	/**
+	 * Run every incomplete task once.
+	 *
+	 * A failing task never stops the other tasks from running, and never escapes
+	 * to the run loop (which would shut maxwell down).  After
+	 * {@link #MAX_TASK_ATTEMPTS} failures the task is abandoned.
+	 *
+	 * @return whether any task failed during this pass
+	 */
+	private boolean doWork() throws Exception {
+		boolean anyFailed = false;
 		List<BootstrapTask> tasks = getIncompleteTasks();
 		synchronized(bootstrapMutex) {
 			for ( BootstrapTask task : tasks ) {
+				if ( isExhausted(task) ) {
+					if ( !abandonTask(task, "a previous attempt to abandon it failed") )
+						anyFailed = true;
+					continue;
+				}
+
 				if (LOGGER.isDebugEnabled()) {
 					LOGGER.debug("starting bootstrap task: {}", task.logString());
 				}
@@ -85,16 +123,78 @@ public class BootstrapController extends RunLoopProcess  {
 					activeTask = task;
 				}
 
-				bootstrapper.startBootstrap(task, producer, getCurrentSchemaID());
-
-				synchronized(completionMutex) {
-					pushSkippedRows();
-					activeTask = null;
+				try {
+					bootstrapper.startBootstrap(task, producer, getCurrentSchemaID());
+					taskFailures.remove(task.id);
+				} catch ( InterruptedException e ) {
+					throw e;
+				} catch ( SynchronousBootstrapper.BootstrapProducerException e ) {
+					// the producer is failing, not the task: retry without counting it against the task
+					anyFailed = true;
+					LOGGER.error("producer failed during bootstrap task {}, will retry", task.logString(), e.getCause());
+				} catch ( Exception e ) {
+					anyFailed = true;
+					recordTaskFailure(task, e);
+				} finally {
+					synchronized(completionMutex) {
+						try {
+							pushSkippedRows();
+						} finally {
+							activeTask = null;
+						}
+					}
 				}
 			}
 		}
+		return anyFailed;
+	}
 
-		Thread.sleep(1000);
+	private boolean isExhausted(BootstrapTask task) {
+		return taskFailures.getOrDefault(task.id, 0) >= MAX_TASK_ATTEMPTS;
+	}
+
+	private void recordTaskFailure(BootstrapTask task, Exception e) {
+		int attempts = taskFailures.merge(task.id, 1, Integer::sum);
+		if ( attempts >= MAX_TASK_ATTEMPTS ) {
+			LOGGER.error("bootstrap task {} failed (attempt {}/{}), giving up", task.logString(), attempts, MAX_TASK_ATTEMPTS, e);
+			abandonTask(task, String.format("failed %d times, last error: %s", attempts, e));
+		} else {
+			LOGGER.error("bootstrap task {} failed (attempt {}/{}), will retry", task.logString(), attempts, MAX_TASK_ATTEMPTS, e);
+		}
+	}
+
+	private boolean abandonTask(BootstrapTask task, String reason) {
+		try {
+			if ( !abandonCompletionSent.contains(task.id) ) {
+				bootstrapper.completeBootstrap(task, producer);
+				abandonCompletionSent.add(task.id);
+			}
+			bootstrapper.abandonBootstrap(task, reason);
+			taskFailures.remove(task.id);
+			abandonCompletionSent.remove(task.id);
+			return true;
+		} catch ( Exception e ) {
+			LOGGER.error("couldn't abandon bootstrap task {}, will try again", task.logString(), e);
+			return false;
+		}
+	}
+
+	/**
+	 * How long to wait before the next pass: the normal poll interval, doubled
+	 * for each consecutive pass that had a failure, up to {@link #MAX_RETRY_DELAY_MILLIS}.
+	 */
+	long nextDelayMillis(boolean failed) {
+		if ( !failed ) {
+			consecutiveFailedPasses = 0;
+			return POLL_INTERVAL_MILLIS;
+		}
+
+		consecutiveFailedPasses = Math.min(consecutiveFailedPasses + 1, 16);
+		return Math.min(POLL_INTERVAL_MILLIS << consecutiveFailedPasses, MAX_RETRY_DELAY_MILLIS);
+	}
+
+	protected void sleep(long millis) throws InterruptedException {
+		Thread.sleep(millis);
 	}
 
 	private synchronized Long getCurrentSchemaID() {
@@ -114,7 +214,7 @@ public class BootstrapController extends RunLoopProcess  {
 		this.currentSchemaID = schemaID;
 	}
 
-	private List<BootstrapTask> getIncompleteTasks() throws SQLException {
+	List<BootstrapTask> getIncompleteTasks() throws SQLException {
 		ArrayList<BootstrapTask> list = new ArrayList<>();
 		try ( Connection cx = maxwellConnectionPool.getConnection();
 			  PreparedStatement s = cx.prepareStatement("select * from bootstrap where is_complete = 0 and client_id = ? and (started_at is null or started_at <= now()) order by isnull(started_at), started_at asc, id asc") ) {
