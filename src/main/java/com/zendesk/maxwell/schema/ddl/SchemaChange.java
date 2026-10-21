@@ -21,7 +21,13 @@ public abstract class SchemaChange {
 
 	private static final Set<Pattern> SQL_BLACKLIST = new HashSet<Pattern>();
 
-	private static final Pattern SET_STATEMENT = Pattern.compile("SET\\s+STATEMENT\\s+(\\w+\\s*=\\s*((?<quote>['\"]).*?\\k<quote>|\\w+),?\\s*)+FOR\\s+", Pattern.CASE_INSENSITIVE | Pattern.MULTILINE);
+	// Every pattern applied to raw DDL must run in linear time: anchored, possessive, no back-references.
+	private static final String SET_STATEMENT_ASSIGNMENT = "\\w++\\s*+=\\s*+(?:'[^']*+'|\"[^\"]*+\"|\\w++)";
+	private static final Pattern SET_STATEMENT = Pattern.compile(
+		"\\A\\s*+SET\\s++STATEMENT\\s++" + SET_STATEMENT_ASSIGNMENT
+			+ "(?:\\s*+,\\s*+" + SET_STATEMENT_ASSIGNMENT + ")*+\\s*+FOR\\s++",
+		Pattern.CASE_INSENSITIVE
+	);
 
 	static {
 		SQL_BLACKLIST.add(Pattern.compile("\\A\\s*BEGIN", Pattern.CASE_INSENSITIVE | Pattern.MULTILINE));
@@ -31,7 +37,7 @@ public abstract class SchemaChange {
 		SQL_BLACKLIST.add(Pattern.compile("\\A\\s*REVOKE\\s+", Pattern.CASE_INSENSITIVE | Pattern.MULTILINE));
 		SQL_BLACKLIST.add(Pattern.compile("\\A\\s*SAVEPOINT", Pattern.CASE_INSENSITIVE | Pattern.MULTILINE));
 
-		SQL_BLACKLIST.add(Pattern.compile("\\A\\s*CREATE\\s+(AGGREGATE)?\\s+FUNCTION", Pattern.CASE_INSENSITIVE | Pattern.MULTILINE));
+		SQL_BLACKLIST.add(Pattern.compile("\\A\\s*CREATE\\s+(AGGREGATE\\s+)?FUNCTION", Pattern.CASE_INSENSITIVE | Pattern.MULTILINE));
 		SQL_BLACKLIST.add(Pattern.compile("\\A\\s*(ALTER|CREATE)\\s+(DEFINER=[^\\s]+\\s+)?(EVENT|FUNCTION|TRIGGER|PROCEDURE)", Pattern.CASE_INSENSITIVE | Pattern.MULTILINE));
 		SQL_BLACKLIST.add(Pattern.compile("\\A\\s*DROP\\s+(EVENT|FUNCTION|TRIGGER|PROCEDURE|VIEW)", Pattern.CASE_INSENSITIVE | Pattern.MULTILINE));
 
@@ -50,21 +56,118 @@ public abstract class SchemaChange {
 		SQL_BLACKLIST.add(Pattern.compile("\\A\\s*REPAIR\\s+", Pattern.CASE_INSENSITIVE | Pattern.MULTILINE));
 	}
 
-	private static final Pattern DELETE_BLACKLIST = Pattern.compile("^\\s*DELETE\\s*FROM", Pattern.CASE_INSENSITIVE | Pattern.MULTILINE);
+	private static final Pattern DELETE_BLACKLIST = Pattern.compile("^[^\\S\\r\\n]*DELETE\\s*FROM", Pattern.CASE_INSENSITIVE | Pattern.MULTILINE);
 
-	private static final Pattern CSTYLE_COMMENTS = Pattern.compile("/\\*.*?\\*/", Pattern.DOTALL);
+	private static final Pattern DASH_COMMENTS = Pattern.compile("--.*");
+	private static final Pattern HASH_COMMENTS = Pattern.compile("^[^\\S\\r\\n]*#.*", Pattern.MULTILINE);
 
-	private static boolean matchesBlacklist(String sql) {
+	private static boolean isLineTerminator(char c) {
+		return c == '\n' || c == '\r' || c == '\u0085' || c == '\u2028' || c == '\u2029';
+	}
+
+	private static boolean isRegexWhitespace(char c) {
+		return c == ' ' || c == '\t' || c == '\n' || c == '\u000B' || c == '\f' || c == '\r';
+	}
+
+	// Replaces executable comments with their body, e.g. "/*!50032 CREATE EVENT */" -> "CREATE EVENT".
+	// Same result as replaceAll("/\\*M?!\\d+\\s*(.*)\\*/", "$1") -- the body runs to the last
+	// closer on its line -- but in linear time.
+	static String unwrapExecutableComments(String sql) {
+		int n = sql.length();
+		StringBuilder out = null;
+		int copied = 0;
+		int lineEnd = -1;
+		int lastCloser = -1;
+
+		int i = sql.indexOf("/*", 0);
+		while ( i >= 0 ) {
+			int p = i + 2;
+			if ( p < n && sql.charAt(p) == 'M' )
+				p++;
+
+			int digits = p + 1;
+			if ( p >= n || sql.charAt(p) != '!' ) {
+				i = sql.indexOf("/*", i + 1);
+				continue;
+			}
+
+			p = digits;
+			while ( p < n && sql.charAt(p) >= '0' && sql.charAt(p) <= '9' )
+				p++;
+
+			if ( p == digits ) {
+				i = sql.indexOf("/*", i + 1);
+				continue;
+			}
+
+			while ( p < n && isRegexWhitespace(sql.charAt(p)) )
+				p++;
+
+			int bodyStart = p;
+			if ( bodyStart > lineEnd ) {
+				lineEnd = bodyStart;
+				lastCloser = -1;
+				while ( lineEnd < n && !isLineTerminator(sql.charAt(lineEnd)) ) {
+					if ( sql.charAt(lineEnd) == '*' && lineEnd + 1 < n && sql.charAt(lineEnd + 1) == '/' )
+						lastCloser = lineEnd;
+					lineEnd++;
+				}
+			}
+
+			if ( lastCloser < bodyStart ) {
+				i = sql.indexOf("/*", i + 1);
+				continue;
+			}
+
+			if ( out == null )
+				out = new StringBuilder(n);
+			out.append(sql, copied, i).append(sql, bodyStart, lastCloser);
+			copied = lastCloser + 2;
+			i = sql.indexOf("/*", copied);
+		}
+
+		if ( out == null )
+			return sql;
+		return out.append(sql, copied, n).toString();
+	}
+
+	// Removes "/* ... */" comments, which may span lines. Same result as
+	// Pattern.compile("/\\*.*?\\*/", Pattern.DOTALL).matcher(sql).replaceAll(""), in linear time.
+	static String stripCStyleComments(String sql) {
+		StringBuilder out = null;
+		int copied = 0;
+		int i;
+		while ( (i = sql.indexOf("/*", copied)) >= 0 ) {
+			int close = sql.indexOf("*/", i + 2);
+			if ( close < 0 )
+				break;
+
+			if ( out == null )
+				out = new StringBuilder(sql.length());
+			out.append(sql, copied, i);
+			copied = close + 2;
+		}
+
+		if ( out == null )
+			return sql;
+		return out.append(sql, copied, sql.length()).toString();
+	}
+
+	static String stripForBlacklist(String sql) {
 		// first *include* /*50032 CREATE EVENT */ style sql
-		sql = sql.replaceAll("/\\*M?!\\d+\\s*(.*)\\*/", "$1");
+		sql = unwrapExecutableComments(sql);
 
 		// now strip out comments
-		sql = CSTYLE_COMMENTS.matcher(sql).replaceAll("");
-		sql = sql.replaceAll("\\-\\-.*", "");
-		sql = Pattern.compile("^\\s*#.*", Pattern.MULTILINE).matcher(sql).replaceAll("");
+		sql = stripCStyleComments(sql);
+		sql = DASH_COMMENTS.matcher(sql).replaceAll("");
+		sql = HASH_COMMENTS.matcher(sql).replaceAll("");
 
 		// SET STATEMENT .. FOR syntax can be applied to BLACKLIST element, just omit for tesing purposes
-		sql = SET_STATEMENT.matcher(sql).replaceAll("");
+		return SET_STATEMENT.matcher(sql).replaceAll("");
+	}
+
+	private static boolean matchesBlacklist(String sql) {
+		sql = stripForBlacklist(sql);
 
 		for (Pattern p : SQL_BLACKLIST) {
 			if (p.matcher(sql).find()) {
