@@ -15,33 +15,77 @@ First, copy `raft.xml.example` to `raft.xml`.  Edit to your liking, paying atten
 Note that because we are using a RAFT-based leader election, we will have to spin up at least
 3 maxwell client nodes.
 
+The example stack talks TCP to a static list of peers (`TCPPING`), encrypts all
+cluster traffic with `SYM_ENCRYPT` and requires each joining node to pass `AUTH`
+(`X509Token`).  Whichever node wins the election runs replication, so a host that
+could join the cluster unchallenged could hold leadership and stop CDC, or force
+repeated elections that start and stop Maxwell.  Don't fall back to an
+unauthenticated UDP multicast stack.
 
-Now start each of your HA maxwell nodes like this:
+### Create the shared keystore
+
+Every node uses the same PKCS12 keystore, holding an AES key for `SYM_ENCRYPT`
+and an RSA key pair for `AUTH`:
 
 ```bash
+keytool -genseckey -alias maxwell-raft-sym -keyalg AES -keysize 256 \
+        -storetype PKCS12 -keystore raft.p12
+keytool -genkeypair -alias maxwell-raft-auth -keyalg RSA -keysize 2048 \
+        -validity 3650 -dname "CN=maxwell-raft" -storetype PKCS12 -keystore raft.p12
+```
+
+Copy `raft.p12` to each node over a secure channel and make it readable only by
+the user running Maxwell (`chmod 600`).  Treat the keystore, its password and the
+`AUTH` value as secrets.
+
+### Start the nodes
+
+The keystore location, its password, the `AUTH` shared value and the peer list
+are passed as JVM system properties, so that no secrets live in `raft.xml`.
+If a password is missing the node fails to start.
+
+```bash
+export JAVA_OPTS="-Dmaxwell.raft.keystore=/etc/maxwell/raft.p12 \
+  -Dmaxwell.raft.keystore_password=$RAFT_KEYSTORE_PASSWORD \
+  -Dmaxwell.raft.auth_value=$RAFT_AUTH_VALUE \
+  -Djgroups.tcpping.initial_hosts=host1[7800],host2[7800],host3[7800] \
+  -Djava.net.preferIPv4Stack=true"
+
 host1: $ bin/maxwell --ha --raft_member_id=A
 host2: $ bin/maxwell --ha --raft_member_id=B
 host3: $ bin/maxwell --ha --raft_member_id=C
 ```
 
-if all goes well, the 3 nodes will communicate via multicast/UDP, elect one to
-be the cluster leader, and away you will go.  If one node is terminated or
-partitioned, a new election will be held to replace it.
+`-Djgroups.bind_addr` (default: a site-local address) and `-Djgroups.bind_port`
+(default `7800`) choose the address each node listens on.
+
+If all goes well, the 3 nodes will find each other over TCP, elect one to be the
+cluster leader, and away you will go.  If one node is terminated or partitioned,
+a new election will be held to replace it.  A node without the cluster key can't
+decrypt cluster traffic and never joins; a node with the wrong `AUTH` value is
+rejected with `authentication failed`.
+
+### Isolate the cluster network
+
+Encryption and `AUTH` don't replace network controls.  Run HA nodes on a
+private network or VLAN, and firewall the bind port (`7800` by default) so only
+the other Maxwell HA nodes can reach it.  Anyone holding the keystore and its
+password can join the cluster, so rotate both if a node is retired or
+compromised.
 
 
 ## Getting deeper
 
 More advanced (especially inter-DC) configurations may be implemented by
-editing `raft.xml`; you'll probably need to get the nodes to communicate with
-each other via TCP instead of UDP, and maybe tunnel through a firewall or two,
-good stuff like that.  It's of course out of scope for this document, so
-[check out the jgroups
-documentation](http://www.jgroups.org/manual/html/user-advanced.html), but if
-you come up with something good drop me a line.
+editing `raft.xml`, e.g. replacing `SYM_ENCRYPT` with `ASYM_ENCRYPT` +
+`SSL_KEY_EXCHANGE` so that group keys are distributed over mutual TLS and rotated
+when members leave.  Keep encryption and `AUTH` in any stack you build.  See the
+[jgroups documentation](http://www.jgroups.org/manual5/index.html#Security)
+for details, and if you come up with something good drop me a line.
 
 ## Common problems
 
-Something I encountered right out of the gate was this:
+With the old multicast configuration, something I encountered right out of the gate was this:
 
 ```
 12:37:53,135 WARN  UDP - failed to join /224.0.75.75:7500 on utun0: java.net.SocketException: Can't assign requested address
