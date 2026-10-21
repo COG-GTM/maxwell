@@ -233,6 +233,30 @@ public class DiagnosticHealthCheckTest {
 	}
 
 	@Test
+	public void testDestroyInterruptsActiveRun() throws Exception {
+		CountDownLatch started = new CountDownLatch(1);
+		CountDownLatch interrupted = new CountDownLatch(1);
+		MaxwellDiagnostic blocking = new FakeDiagnostic(false) {
+			@Override
+			public CompletableFuture<MaxwellDiagnosticResult.Check> check() {
+				started.countDown();
+				try {
+					Thread.sleep(TimeUnit.MINUTES.toMillis(1));
+				} catch (InterruptedException e) {
+					interrupted.countDown();
+				}
+				return super.check();
+			}
+		};
+		DiagnosticHealthCheck servlet = servlet(config(null, 0), blocking, System::nanoTime);
+
+		new Thread(servlet::currentResult).start();
+		assertTrue(started.await(5, TimeUnit.SECONDS));
+		servlet.destroy();
+		assertTrue(interrupted.await(5, TimeUnit.SECONDS));
+	}
+
+	@Test
 	public void testWallClockRollbackDoesNotFreezeCache() throws Exception {
 		FakeDiagnostic diagnostic = new FakeDiagnostic(false);
 		Ticker ticker = new Ticker();

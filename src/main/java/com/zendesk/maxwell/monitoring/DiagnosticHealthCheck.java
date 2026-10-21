@@ -20,7 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.FutureTask;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -51,6 +51,7 @@ public class DiagnosticHealthCheck extends HttpServlet {
 	private final LongSupplier nanoTime;
 	// at most one run at a time: while a run is stuck (e.g. blocked on a MySQL write) new runs are refused
 	private final AtomicBoolean running = new AtomicBoolean(false);
+	private volatile Runnable abortActiveRun;
 	protected transient ObjectMapper mapper;
 
 	private final Object lock = new Object();
@@ -72,6 +73,15 @@ public class DiagnosticHealthCheck extends HttpServlet {
 		super.init(config);
 
 		this.mapper = new ObjectMapper().registerModule(new DiagnosticHealthCheckModule());
+	}
+
+	@Override
+	public void destroy() {
+		Runnable abort = abortActiveRun;
+		if (abort != null) {
+			abort.run();
+		}
+		super.destroy();
 	}
 
 	@Override
@@ -174,26 +184,47 @@ public class DiagnosticHealthCheck extends HttpServlet {
 			LOGGER.warn("previous diagnostic run is still in progress, not starting a new one");
 			return failedResult("previous diagnostic run is still in progress");
 		}
-		// running is cleared before the task's result is published, so a completed run never blocks the next one
-		FutureTask<MaxwellDiagnosticResult> run = new FutureTask<>(() -> {
+		AtomicBoolean abandoned = new AtomicBoolean(false);
+		CompletableFuture<MaxwellDiagnosticResult> run = new CompletableFuture<>();
+		Thread thread = new Thread(() -> {
+			MaxwellDiagnosticResult result = null;
+			Throwable error = null;
 			try {
-				return runChecks();
+				// a run given up on before this thread got scheduled must not start probing afterwards
+				if (!abandoned.get() && !Thread.currentThread().isInterrupted()) {
+					result = runChecks();
+				}
+			} catch (Throwable t) {
+				error = t;
 			} finally {
+				abortActiveRun = null;
+				// cleared before the result is published, so a completed run never blocks the next one
 				running.set(false);
 			}
-		});
-		Thread thread = new Thread(run, "maxwell-diagnostic");
+			if (error != null) {
+				run.completeExceptionally(error);
+			} else if (result != null) {
+				run.complete(result);
+			} else {
+				run.cancel(false);
+			}
+		}, "maxwell-diagnostic");
 		thread.setDaemon(true);
+		Runnable abort = () -> {
+			abandoned.set(true);
+			thread.interrupt();
+		};
+		abortActiveRun = abort;
 		thread.start();
 
 		try {
 			return run.get(runDeadlineMs(), TimeUnit.MILLISECONDS);
 		} catch (InterruptedException e) {
 			Thread.currentThread().interrupt();
-			thread.interrupt();
+			abort.run();
 			return failedResult("diagnostic run was interrupted");
-		} catch (TimeoutException e) {
-			thread.interrupt();
+		} catch (TimeoutException | CancellationException e) {
+			abort.run();
 			LOGGER.warn("diagnostic run did not return after " + runDeadlineMs() + " ms");
 			return failedResult("check did not return after " + diagnosticContext.config.timeout + " ms");
 		} catch (ExecutionException e) {
