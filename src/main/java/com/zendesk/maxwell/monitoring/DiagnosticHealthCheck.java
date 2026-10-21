@@ -20,12 +20,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.SynchronousQueue;
-import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
 
@@ -51,7 +49,8 @@ public class DiagnosticHealthCheck extends HttpServlet {
 
 	private final MaxwellDiagnosticContext diagnosticContext;
 	private final LongSupplier nanoTime;
-	private final ThreadPoolExecutor runner;
+	// at most one run at a time: while a run is stuck (e.g. blocked on a MySQL write) new runs are refused
+	private final AtomicBoolean running = new AtomicBoolean(false);
 	protected transient ObjectMapper mapper;
 
 	private final Object lock = new Object();
@@ -66,12 +65,6 @@ public class DiagnosticHealthCheck extends HttpServlet {
 	DiagnosticHealthCheck(MaxwellDiagnosticContext diagnosticContext, LongSupplier nanoTime) {
 		this.diagnosticContext = diagnosticContext;
 		this.nanoTime = nanoTime;
-		// a single runner and no queue: while a run is stuck (e.g. blocked on a MySQL write) new runs are refused
-		this.runner = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS, new SynchronousQueue<>(), r -> {
-			Thread t = new Thread(r, "maxwell-diagnostic");
-			t.setDaemon(true);
-			return t;
-		});
 	}
 
 	@Override
@@ -79,12 +72,6 @@ public class DiagnosticHealthCheck extends HttpServlet {
 		super.init(config);
 
 		this.mapper = new ObjectMapper().registerModule(new DiagnosticHealthCheckModule());
-	}
-
-	@Override
-	public void destroy() {
-		runner.shutdownNow();
-		super.destroy();
 	}
 
 	@Override
@@ -183,22 +170,30 @@ public class DiagnosticHealthCheck extends HttpServlet {
 	}
 
 	private MaxwellDiagnosticResult runBounded() {
-		Future<MaxwellDiagnosticResult> run;
-		try {
-			run = runner.submit(this::runChecks);
-		} catch (RejectedExecutionException e) {
+		if (!running.compareAndSet(false, true)) {
 			LOGGER.warn("previous diagnostic run is still in progress, not starting a new one");
 			return failedResult("previous diagnostic run is still in progress");
 		}
+		// running is cleared before the task's result is published, so a completed run never blocks the next one
+		FutureTask<MaxwellDiagnosticResult> run = new FutureTask<>(() -> {
+			try {
+				return runChecks();
+			} finally {
+				running.set(false);
+			}
+		});
+		Thread thread = new Thread(run, "maxwell-diagnostic");
+		thread.setDaemon(true);
+		thread.start();
 
 		try {
 			return run.get(runDeadlineMs(), TimeUnit.MILLISECONDS);
 		} catch (InterruptedException e) {
 			Thread.currentThread().interrupt();
-			run.cancel(true);
+			thread.interrupt();
 			return failedResult("diagnostic run was interrupted");
 		} catch (TimeoutException e) {
-			run.cancel(true);
+			thread.interrupt();
 			LOGGER.warn("diagnostic run did not return after " + runDeadlineMs() + " ms");
 			return failedResult("check did not return after " + diagnosticContext.config.timeout + " ms");
 		} catch (ExecutionException e) {

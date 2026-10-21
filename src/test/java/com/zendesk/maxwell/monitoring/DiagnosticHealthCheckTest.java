@@ -222,6 +222,17 @@ public class DiagnosticHealthCheckTest {
 	}
 
 	@Test
+	public void testBackToBackRunsWithZeroIntervalAllSucceed() throws Exception {
+		FakeDiagnostic diagnostic = new FakeDiagnostic(false);
+		DiagnosticHealthCheck servlet = servlet(config(null, 0), diagnostic, System::nanoTime);
+
+		for (int i = 0; i < 200; i++) {
+			assertTrue(servlet.currentResult().isSuccess());
+		}
+		assertThat(diagnostic.runs.get(), is(200));
+	}
+
+	@Test
 	public void testWallClockRollbackDoesNotFreezeCache() throws Exception {
 		FakeDiagnostic diagnostic = new FakeDiagnostic(false);
 		Ticker ticker = new Ticker();
