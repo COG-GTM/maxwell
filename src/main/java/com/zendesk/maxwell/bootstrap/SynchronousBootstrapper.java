@@ -240,6 +240,9 @@ public class SynchronousBootstrapper {
 	 * @return whether the row may be pushed to the producer
 	 */
 	static boolean shouldBootstrapRow(Filter filter, String database, String table, RowMap row) {
+		if ( isTableBlacklisted(filter, database, table) )
+			return false;
+
 		if ( filter == null || filter.isSystemWhitelisted(database, table) )
 			return true;
 

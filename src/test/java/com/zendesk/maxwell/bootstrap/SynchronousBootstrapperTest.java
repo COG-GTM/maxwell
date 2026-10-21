@@ -193,4 +193,11 @@ public class SynchronousBootstrapperTest {
 		filter.set("exclude: shard_1.*");
 		assertThat(SynchronousBootstrapper.shouldBootstrapRow(filter, "shard_1", "orders", row), is(false));
 	}
+
+	@Test
+	public void testBlacklistBeatsColumnIncludeForRows() throws Exception {
+		Filter filter = new Filter("maxwell", "include: shard_1.orders.status=open, blacklist: shard_1.orders");
+
+		assertThat(SynchronousBootstrapper.shouldBootstrapRow(filter, "shard_1", "orders", rowWithStatus("shard_1", "orders", "open")), is(false));
+	}
 }
