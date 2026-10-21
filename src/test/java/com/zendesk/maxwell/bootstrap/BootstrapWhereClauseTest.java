@@ -76,6 +76,27 @@ public class BootstrapWhereClauseTest {
 	}
 
 	@Test
+	public void testAnsiQuotesTreatsDoubleQuotesAsIdentifiers() throws Exception {
+		BootstrapWhereClause w = BootstrapWhereClause.parse("\"id\" = \"ID\" and text_field = 'x'", COLUMNS, false, true);
+		assertThat(w.getSQL(), is("((`id` = `id`) AND (`text_field` = ?))"));
+		assertThat(w.getParams(), is(Arrays.<Object>asList("x")));
+
+		try {
+			BootstrapWhereClause.parse("text_field = \"x\"", COLUMNS, false, true);
+			fail("expected double-quoted unknown column to be rejected under ANSI_QUOTES");
+		} catch ( BootstrapWhereClause.InvalidWhereClauseException e ) {
+			assertThat(e.getMessage(), containsString("unknown column"));
+		}
+	}
+
+	@Test
+	public void testDoubleQuotesAreStringsWithoutAnsiQuotes() throws Exception {
+		BootstrapWhereClause w = BootstrapWhereClause.parse("\"id\" = \"id\"", COLUMNS, false, false);
+		assertThat(w.getSQL(), is("(? = ?)"));
+		assertThat(w.getParams(), is(Arrays.<Object>asList("id", "id")));
+	}
+
+	@Test
 	public void testNoBackslashEscapesTreatsBackslashLiterally() throws Exception {
 		BootstrapWhereClause w = BootstrapWhereClause.parse("text_field = 'a\\b' or text_field = 'c\\'", COLUMNS, true);
 		assertThat(w.getSQL(), is("((`text_field` = ?) OR (`text_field` = ?))"));

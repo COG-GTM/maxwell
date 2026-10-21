@@ -172,7 +172,9 @@ public class MaxwellBootstrapUtility {
 	private Long calculateRowCount(Connection connection, String db, String table, String whereClause) throws SQLException, BootstrapWhereClause.InvalidWhereClauseException {
 		LOGGER.info("counting rows");
 		String from = Sql.quoteIdentifier(db) + "." + Sql.quoteIdentifier(table);
-		BootstrapWhereClause parsedWhere = BootstrapWhereClause.parse(whereClause, getColumnNames(connection, from), connection);
+		BootstrapWhereClause parsedWhere = null;
+		if ( whereClause != null && !whereClause.trim().isEmpty() )
+			parsedWhere = BootstrapWhereClause.parse(whereClause, getColumnNames(connection, from), connection);
 
 		String sql = "select count(*) from " + from;
 		if ( parsedWhere != null ) {

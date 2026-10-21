@@ -94,7 +94,8 @@ public class BootstrapWhereClause {
 	}
 
 	/**
-	 * Parse a where clause using the string-literal rules of the given connection's sql_mode.
+	 * Parse a where clause using the quoting rules of the given connection's sql_mode
+	 * (NO_BACKSLASH_ESCAPES and ANSI_QUOTES).
 	 *
 	 * @param clause     the raw clause, may be null or blank
 	 * @param columns    column names of the table being bootstrapped
@@ -106,14 +107,20 @@ public class BootstrapWhereClause {
 	public static BootstrapWhereClause parse(String clause, Collection<String> columns, Connection connection) throws InvalidWhereClauseException, SQLException {
 		if ( clause == null || clause.trim().isEmpty() )
 			return null;
-		return parse(clause, columns, isNoBackslashEscapes(connection));
+		Set<String> sqlMode = getSqlMode(connection);
+		return parse(clause, columns, sqlMode.contains("NO_BACKSLASH_ESCAPES"), sqlMode.contains("ANSI_QUOTES"));
 	}
 
-	static boolean isNoBackslashEscapes(Connection connection) throws SQLException {
+	static Set<String> getSqlMode(Connection connection) throws SQLException {
 		try ( Statement s = connection.createStatement();
 			  ResultSet rs = s.executeQuery("select @@session.sql_mode") ) {
 			String mode = rs.next() ? rs.getString(1) : null;
-			return mode != null && mode.toUpperCase(Locale.ROOT).contains("NO_BACKSLASH_ESCAPES");
+			Set<String> modes = new HashSet<>();
+			if ( mode != null ) {
+				for ( String m : mode.split(",") )
+					modes.add(m.trim().toUpperCase(Locale.ROOT));
+			}
+			return modes;
 		}
 	}
 
@@ -125,6 +132,18 @@ public class BootstrapWhereClause {
 	 * @throws InvalidWhereClauseException if the clause is not in the allowed grammar
 	 */
 	static BootstrapWhereClause parse(String clause, Collection<String> columns, boolean noBackslashEscapes) throws InvalidWhereClauseException {
+		return parse(clause, columns, noBackslashEscapes, false);
+	}
+
+	/**
+	 * @param clause             the raw clause, may be null or blank
+	 * @param columns            column names of the table being bootstrapped
+	 * @param noBackslashEscapes treat backslashes in string literals literally, as mysql does under NO_BACKSLASH_ESCAPES
+	 * @param ansiQuotes         treat double quotes as identifier quotes, as mysql does under ANSI_QUOTES
+	 * @return the parsed clause, or null if there is no clause
+	 * @throws InvalidWhereClauseException if the clause is not in the allowed grammar
+	 */
+	static BootstrapWhereClause parse(String clause, Collection<String> columns, boolean noBackslashEscapes, boolean ansiQuotes) throws InvalidWhereClauseException {
 		if ( clause == null || clause.trim().isEmpty() )
 			return null;
 
@@ -135,7 +154,7 @@ public class BootstrapWhereClause {
 		for ( String c : columns )
 			columnsByLowerName.put(c.toLowerCase(Locale.ROOT), c);
 
-		Parser parser = new Parser(new Lexer(clause, noBackslashEscapes).tokenize(), columnsByLowerName);
+		Parser parser = new Parser(new Lexer(clause, noBackslashEscapes, ansiQuotes).tokenize(), columnsByLowerName);
 		String sql = parser.parseClause();
 		return new BootstrapWhereClause(sql, parser.params);
 	}
@@ -173,11 +192,13 @@ public class BootstrapWhereClause {
 
 		private final String input;
 		private final boolean noBackslashEscapes;
+		private final boolean ansiQuotes;
 		private int pos = 0;
 
-		Lexer(String input, boolean noBackslashEscapes) {
+		Lexer(String input, boolean noBackslashEscapes, boolean ansiQuotes) {
 			this.input = input;
 			this.noBackslashEscapes = noBackslashEscapes;
+			this.ansiQuotes = ansiQuotes;
 		}
 
 		List<Token> tokenize() throws InvalidWhereClauseException {
@@ -204,11 +225,11 @@ public class BootstrapWhereClause {
 			if ( input.startsWith("--", pos) || input.startsWith("/*", pos) || c == '#' )
 				throw new InvalidWhereClauseException("comments are not allowed in a bootstrap where clause (position " + start + ")");
 
+			if ( c == '`' || (c == '"' && ansiQuotes) )
+				return new Token(TokenType.QUOTED_IDENT, readQuotedIdentifier(c), start);
+
 			if ( c == '\'' || c == '"' )
 				return new Token(TokenType.STRING, readString(c), start);
-
-			if ( c == '`' )
-				return new Token(TokenType.QUOTED_IDENT, readQuotedIdentifier(), start);
 
 			if ( isDigit(c) || (c == '.' && pos + 1 < input.length() && isDigit(input.charAt(pos + 1))) )
 				return new Token(TokenType.NUMBER, readNumber(), start);
@@ -270,15 +291,15 @@ public class BootstrapWhereClause {
 			}
 		}
 
-		private String readQuotedIdentifier() throws InvalidWhereClauseException {
+		private String readQuotedIdentifier(char quote) throws InvalidWhereClauseException {
 			int start = pos;
 			StringBuilder sb = new StringBuilder();
 			pos++;
 			while ( pos < input.length() ) {
 				char c = input.charAt(pos);
-				if ( c == '`' ) {
-					if ( pos + 1 < input.length() && input.charAt(pos + 1) == '`' ) {
-						sb.append('`');
+				if ( c == quote ) {
+					if ( pos + 1 < input.length() && input.charAt(pos + 1) == quote ) {
+						sb.append(quote);
 						pos += 2;
 						continue;
 					}
