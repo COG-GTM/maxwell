@@ -259,6 +259,12 @@ LOG_LEVEL: [ debug &#124; info &#124; warn &#124; error ]
 <p id="sslopt" class="jumptarget">
 SSL_OPTION: [ DISABLED &#124; PREFERRED &#124; REQUIRED &#124; VERIFY_CA &#124; VERIFY_IDENTITY ]
 </p>
+<p>
+The SSL option is passed to MySQL Connector/J as its <code>sslMode</code> connection property, unchanged.
+<code>VERIFY_CA</code> checks the server certificate against a trusted CA, and <code>VERIFY_IDENTITY</code> also checks the hostname,
+so the server's CA has to be in the JVM truststore (or in <code>trustCertificateKeyStoreUrl</code> set through <code>jdbc_options</code>).
+If <code>jdbc_options</code> also sets <code>sslMode</code>, the stricter of the two is used.
+</p>
 <p id="producer_type" class="jumptarget">
 PRODUCER_TYPE: [ stdout &#124; file &#124; kafka &#124; kinesis &#124; pubsub &#124; sqs &#124; rabbitmq &#124; redis ]
 </p>

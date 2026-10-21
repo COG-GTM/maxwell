@@ -54,24 +54,20 @@ public class MaxwellBootstrapUtilityConfig extends AbstractConfig {
 	}
 
 	private String getConfigConnectionURI(MaxwellMysqlConfig config) throws URISyntaxException {
-		URIBuilder uriBuilder = new URIBuilder();
-		uriBuilder.setScheme("jdbc:mysql");
-		uriBuilder.setHost(config.host);
-		uriBuilder.setPort(config.port);
-		uriBuilder.setPath("/" + schemaDatabaseName);
-		for (Map.Entry<String, String> jdbcOption : config.jdbcOptions.entrySet()) {
-			uriBuilder.addParameter(jdbcOption.getKey(), jdbcOption.getValue());
-		}
-		return uriBuilder.build().toString();
+		return buildConnectionURI(config, schemaDatabaseName);
 	}
 
 	private String getConfigReplicationConnectionURI(MaxwellMysqlConfig config) throws URISyntaxException {
+		return buildConnectionURI(config, databaseName);
+	}
+
+	private static String buildConnectionURI(MaxwellMysqlConfig config, String database) throws URISyntaxException {
 		URIBuilder uriBuilder = new URIBuilder();
 		uriBuilder.setScheme("jdbc:mysql");
 		uriBuilder.setHost(config.host);
 		uriBuilder.setPort(config.port);
-		uriBuilder.setPath("/" + databaseName);
-		for (Map.Entry<String, String> jdbcOption : config.jdbcOptions.entrySet()) {
+		uriBuilder.setPath("/" + database);
+		for (Map.Entry<String, String> jdbcOption : config.getJDBCConnectionOptions().entrySet()) {
 			uriBuilder.addParameter(jdbcOption.getKey(), jdbcOption.getValue());
 		}
 		return uriBuilder.build().toString();
@@ -98,11 +94,13 @@ public class MaxwellBootstrapUtilityConfig extends AbstractConfig {
 		parser.accepts( "user", "mysql username. default: maxwell" ).withRequiredArg();
 		parser.accepts( "password", "mysql password" ).withOptionalArg();
 		parser.accepts( "port", "mysql port. default: 3306" ).withRequiredArg();
+		parser.accepts( "ssl", "SSL behavior for mysql cx: DISABLED|PREFERRED|REQUIRED|VERIFY_CA|VERIFY_IDENTITY" ).withRequiredArg();
 		parser.accepts( "__separator_5", "" );
 		parser.accepts( "replication_host", "mysql host to query. default: (host)").withRequiredArg();
 		parser.accepts( "replication_user", "username. default: maxwell" ).withRequiredArg();
 		parser.accepts( "replication_password", "password" ).withOptionalArg();
 		parser.accepts( "replication_port", "port. default: 3306" ).withRequiredArg();
+		parser.accepts( "replication_ssl", "SSL behavior for replication cx. default: (ssl)" ).withRequiredArg();
 		parser.accepts( "__separator_6", "" );
 		parser.accepts( "comment", "arbitrary comment to be added to every bootstrap row record" ).withRequiredArg();
 		parser.accepts( "schema_database", "database that contains maxwell schema and state").withRequiredArg();
@@ -166,6 +164,9 @@ public class MaxwellBootstrapUtilityConfig extends AbstractConfig {
 
 			if ( replicationMysql.password == null )
 				replicationMysql.password = mysql.password;
+
+			if ( replicationMysql.sslMode == null )
+				replicationMysql.sslMode = mysql.sslMode;
 		}
 
 		this.schemaDatabaseName = fetchStringOption("schema_database", options, properties, "maxwell");
