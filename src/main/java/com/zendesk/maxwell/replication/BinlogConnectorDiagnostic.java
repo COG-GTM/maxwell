@@ -4,6 +4,8 @@ import com.zendesk.maxwell.MaxwellContext;
 import com.zendesk.maxwell.MaxwellMysqlConfig;
 import com.zendesk.maxwell.monitoring.MaxwellDiagnostic;
 import com.zendesk.maxwell.monitoring.MaxwellDiagnosticResult;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
 import java.util.HashMap;
@@ -11,8 +13,11 @@ import java.util.Map;
 import java.util.Observable;
 import java.util.Observer;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 public class BinlogConnectorDiagnostic implements MaxwellDiagnostic {
+
+	private static final Logger LOGGER = LoggerFactory.getLogger(BinlogConnectorDiagnostic.class);
 
 	private final MaxwellContext context;
 
@@ -27,7 +32,11 @@ public class BinlogConnectorDiagnostic implements MaxwellDiagnostic {
 
 	@Override
 	public CompletableFuture<MaxwellDiagnosticResult.Check> check() {
-		return getLatency().thenApply(this::normalResult).exceptionally(this::exceptionResult);
+		CompletableFuture<Long> latency = getLatency();
+		CompletableFuture<MaxwellDiagnosticResult.Check> result = latency.thenApply(this::normalResult).exceptionally(this::exceptionResult);
+		// a cancelled check (e.g. caller timeout) must release the heartbeat observer
+		result.whenComplete((check, e) -> latency.cancel(true));
+		return result;
 	}
 
 	@Override
@@ -59,8 +68,10 @@ public class BinlogConnectorDiagnostic implements MaxwellDiagnostic {
 	}
 
 	private MaxwellDiagnosticResult.Check exceptionResult(Throwable e) {
+		Throwable cause = (e instanceof CompletionException && e.getCause() != null) ? e.getCause() : e;
+		LOGGER.warn("binlog-connector diagnostic failed", cause);
 		Map<String, String> info = new HashMap<>();
-		info.put("error", e.getCause().toString());
+		info.put("error", cause.toString());
 		return new MaxwellDiagnosticResult.Check(this, false, info);
 	}
 

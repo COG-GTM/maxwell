@@ -230,6 +230,9 @@ http_path_prefix         | STRING                              | http path prefi
 http_bind_address        | STRING                              | the address the server will bind to when http reporting is configured | all addresses
 http_diagnostic          | BOOLEAN                             | enable http diagnostic endpoint | false
 http_diagnostic_timeout  | MILLISECONDS                        | the http diagnostic response timeout| 10000
+http_diagnostic_token    | STRING                              | bearer token required to call `/diagnostic` (`Authorization: Bearer <token>`). When unset, responses omit resources and error details |
+http_diagnostic_min_interval | MILLISECONDS                    | minimum time between two diagnostic runs; requests in between get the cached result | 5000
+http_diagnostic_kafka_topic | STRING                           | kafka topic the diagnostic probe message is sent to (must not be `kafka_topic`) | maxwell_diagnostic
 metrics_datadog_type     | [udp &#124; http] | when metrics_type includes `datadog` this is the way metrics will be reported, can only be one of [udp &#124; http] | udp
 metrics_datadog_tags     | STRING | datadog tags that should be supplied, e.g. tag1:value1,tag2:value2 |
 metrics_age_slo     | INT | Latency service level objective threshold in seconds (Optional). When set, a `message.publish.age.slo_violation` metric is emitted to Datadog if the latency exceeds the threshold |
