@@ -9,10 +9,14 @@ import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 import static java.io.StreamTokenizer.*;
 
 public class FilterParser {
+	private static final String REGEX_METACHARS = "\\.[]{}()<>*+-=!?^$|&#~,:/ ";
+	private static final Pattern BARE_IDENTIFIER = Pattern.compile("[A-Za-z0-9_\\u00a0-\\u00ff]+");
+
 	private StreamTokenizer tokenizer;
 	private InputStreamReader inputStream;
 	private final String input;
@@ -31,7 +35,7 @@ public class FilterParser {
 		this.tokenizer = new StreamTokenizer(inputStream);
 		try {
 			return doParse();
-		} catch ( IOException e ) {
+		} catch ( IOException | PatternSyntaxException e ) {
 			throw new InvalidFilterException(e.getMessage());
 		}
 	}
@@ -125,7 +129,12 @@ public class FilterParser {
 		Pattern pattern;
 		switch ( tokenizer.ttype ) {
 			case '/':
-				pattern = Pattern.compile(parseRegexp());
+				String regexp = parseRegexp();
+				try {
+					pattern = Pattern.compile(regexp);
+				} catch ( PatternSyntaxException e ) {
+					throw new IOException("Invalid regexp /" + regexp + "/: " + e.getDescription());
+				}
 				break;
 			case '*':
 				pattern = Pattern.compile("");
@@ -134,7 +143,7 @@ public class FilterParser {
 			case '`':
 			case '\'':
 			case '"':
-				pattern = Pattern.compile("^" + tokenizer.sval + "$");
+				pattern = literalPattern(tokenizer.sval);
 				break;
 			default:
 				throw new IOException("Expected string or regexp, saw '" + Character.toString((char) tokenizer.ttype));
@@ -147,7 +156,10 @@ public class FilterParser {
 		char ch, lastChar = 0;
 		String s = "";
 		while ( true ) {
-			ch = (char) inputStream.read();
+			int c = inputStream.read();
+			if ( c == -1 )
+				throw new IOException("Unterminated regexp: /" + s);
+			ch = (char) c;
 			if ( ch == '/' && lastChar != '\\' )
 				break;
 
@@ -155,5 +167,50 @@ public class FilterParser {
 			lastChar = ch;
 		}
 		return s;
+	}
+
+	static Pattern literalPattern(String name) {
+		return Pattern.compile("^" + escapeLiteral(name) + "$");
+	}
+
+	static String escapeLiteral(String name) {
+		StringBuilder sb = new StringBuilder(name.length());
+		for ( char c : name.toCharArray() ) {
+			if ( REGEX_METACHARS.indexOf(c) >= 0 )
+				sb.append('\\');
+			sb.append(c);
+		}
+		return sb.toString();
+	}
+
+	/**
+	 * Returns the identifier an exact-match pattern built by {@link #literalPattern} matches, or
+	 * null if the pattern is a regular expression.
+	 */
+	static String literalValue(Pattern p) {
+		String s = p.pattern();
+		if ( s.length() < 2 || !s.startsWith("^") || !s.endsWith("$") )
+			return null;
+
+		String body = s.substring(1, s.length() - 1);
+		StringBuilder name = new StringBuilder(body.length());
+		for ( int i = 0; i < body.length(); i++ ) {
+			char c = body.charAt(i);
+			if ( c == '\\' ) {
+				if ( ++i == body.length() )
+					return null;
+				c = body.charAt(i);
+			}
+			name.append(c);
+		}
+
+		String literal = name.toString();
+		return escapeLiteral(literal).equals(body) ? literal : null;
+	}
+
+	static String quoteIdentifier(String name) {
+		if ( BARE_IDENTIFIER.matcher(name).matches() )
+			return name;
+		return "`" + name.replace("\\", "\\\\").replace("`", "\\`") + "`";
 	}
 }
