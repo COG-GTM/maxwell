@@ -139,6 +139,22 @@ public class BootstrapIntegrationTest extends MaxwellTestWithIsolatedServer {
 	}
 
 	@Test
+	public void testBootstrapRejectsInjectedWhereClause() throws Exception {
+		String[] sql = {
+			"truncate maxwell.bootstrap",
+			"create table shard_1.bootstrap_injected (id int auto_increment primary key, name varchar(255))",
+			"insert into shard_1.bootstrap_injected set name = 'visible'",
+			"insert into maxwell.bootstrap set database_name = 'shard_1', table_name = 'bootstrap_injected', "
+				+ "where_clause = '1=0 union select 1, user from mysql.user'"
+		};
+
+		List<RowMap> rows = MaxwellTestSupport.getRowsWithReplicator(server, sql, null, null);
+
+		assertThat(bootstrapRowsFor(rows, "bootstrap_injected").size(), is(0));
+		assertBootstrapTaskCompleted("bootstrap_injected");
+	}
+
+	@Test
 	public void testBootstrapNullValues() throws Exception {
 		runJSON("json/bootstrap-null-values");
 	}
