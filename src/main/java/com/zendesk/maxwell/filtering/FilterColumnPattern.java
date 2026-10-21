@@ -62,6 +62,10 @@ public class FilterColumnPattern extends FilterPattern {
 			&& columns.contains(columnName);
 	}
 
+	public Pattern getColumnPattern() {
+		return columnPattern;
+	}
+
 	@Override
 	public String toString() {
 		String filterString = super.toString();

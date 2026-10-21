@@ -30,7 +30,7 @@ public class MaxwellHTTPServer {
 		if (metricsRegistries != null || diagnosticContext != null || context.getConfig().enableHttpConfig) {
 			LOGGER.info("Maxwell http server starting");
 			int port = context.getConfig().httpPort;
-			String httpBindAddress = context.getConfig().httpBindAddress;
+			String httpBindAddress = context.getConfig().getEffectiveHttpBindAddress();
 			String pathPrefix = context.getConfig().httpPathPrefix;
 			MaxwellHTTPServerWorker maxwellHTTPServerWorker = new MaxwellHTTPServerWorker(httpBindAddress, port, pathPrefix, metricsRegistries, diagnosticContext, context);
 			Thread thread = new Thread(maxwellHTTPServerWorker);

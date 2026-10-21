@@ -13,11 +13,22 @@ import java.net.URL;
 import java.net.http.*;
 
 public class MaxwellHttpConfigIntegrationTest extends MaxwellTestWithIsolatedServer {
+	private static final String SECRET = "integration-test-secret";
 
 	private HttpResponse<String> getConfig() throws IOException, InterruptedException {
 		HttpClient client = HttpClient.newHttpClient();
 		HttpRequest request = HttpRequest.newBuilder()
     .uri(URI.create("http://localhost:22222/config"))
+		.header("Authorization", "Bearer " + SECRET)
+		.build();
+		return client.send(request, HttpResponse.BodyHandlers.ofString());
+	}
+
+	private HttpResponse<String> unauthenticatedUpdate(String filter) throws IOException, InterruptedException {
+		HttpClient client = HttpClient.newHttpClient();
+		HttpRequest request = HttpRequest.newBuilder()
+		.method("PUT", HttpRequest.BodyPublishers.ofString(String.format("{\"filter\":\"%s\"}", filter)))
+		.uri(URI.create("http://localhost:22222/config"))
 		.build();
 		return client.send(request, HttpResponse.BodyHandlers.ofString());
 	}
@@ -27,6 +38,7 @@ public class MaxwellHttpConfigIntegrationTest extends MaxwellTestWithIsolatedSer
 		HttpRequest request = HttpRequest.newBuilder()
 		.method(method, HttpRequest.BodyPublishers.ofString(String.format("{\"filter\":\"%s\"}", filter)))
     .uri(URI.create("http://localhost:22222/config"))
+		.header("Authorization", "Bearer " + SECRET)
 		.build();
 		return client.send(request, HttpResponse.BodyHandlers.ofString());
 	}
@@ -37,6 +49,7 @@ public class MaxwellHttpConfigIntegrationTest extends MaxwellTestWithIsolatedSer
 			URL url = new URL("http://localhost:22222/config");
 
 			HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+			connection.setRequestProperty("Authorization", "Bearer " + SECRET);
 			InputStream responseStream = connection.getInputStream();
 
 			responseStream.read();
@@ -56,6 +69,12 @@ public class MaxwellHttpConfigIntegrationTest extends MaxwellTestWithIsolatedSer
 						// test get
 						HttpResponse<String> cfg = getConfig();
 						Assert.assertEquals(cfg.statusCode(), 200);
+						Assert.assertEquals(cfg.body(), "{\"filter\":null}\n");
+
+						// unauthenticated updates are rejected and leave the filter untouched
+						cfg = unauthenticatedUpdate("exclude: *.*");
+						Assert.assertEquals(401, cfg.statusCode());
+						cfg = getConfig();
 						Assert.assertEquals(cfg.body(), "{\"filter\":null}\n");
 
 						// test valid post
@@ -100,6 +119,7 @@ public class MaxwellHttpConfigIntegrationTest extends MaxwellTestWithIsolatedSer
 		MaxwellTestSupport.getRowsWithReplicator(server, cb, (config) -> {
 			config.httpPort = 22222;
 			config.enableHttpConfig = true;
+			config.httpConfigSecret = SECRET;
 		});
 
 	}
