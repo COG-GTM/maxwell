@@ -1,17 +1,53 @@
 <?xml version='1.0' encoding='utf-8'?>
+<!--
+  Maxwell HA (jgroups-raft) cluster configuration.  See docs/docs/high_availability.md.
+
+  Every node must authenticate and encrypt cluster traffic: the raft role decides
+  which node runs replication, so an unauthenticated member could hold leadership
+  or force repeated elections.  This stack therefore:
+
+    * uses TCP with a static TCPPING member list (no UDP multicast discovery),
+    * encrypts all cluster messages with a shared AES key (SYM_ENCRYPT), and
+    * requires a shared secret on JOIN, encrypted with an RSA key pair from the
+      same keystore (AUTH + X509Token).
+
+  Values are read from JVM system properties (e.g. JAVA_OPTS="-Djgroups.bind_addr=...")
+  or environment variables of the same name.  The keystore password and auth
+  secret have no defaults: a node without them fails to start instead of joining
+  insecurely.  Nodes on the same host need distinct jgroups.bind_port values
+  (7800, 7801, 7802 with the default peer list).  Keep the HA cluster on an
+  isolated network segment as well.
+-->
 <config xmlns="urn:org:jgroups"
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="urn:org:jgroups http://www.jgroups.org/schema/jgroups.xsd">
-    <UDP mcast_addr="228.8.8.8" mcast_port="${jgroups.udp.mcast_port:45588}"/>
-    <PING />
+    <TCP bind_addr="${jgroups.bind_addr:127.0.0.1}"
+         bind_port="${jgroups.bind_port:7800}"
+         port_range="0"/>
+    <TCPPING initial_hosts="${jgroups.tcpping.initial_hosts:127.0.0.1[7800],127.0.0.1[7801],127.0.0.1[7802]}"
+             port_range="0"/>
     <MERGE3 />
     <FD_SOCK/>
     <FD_ALL/>
     <VERIFY_SUSPECT timeout="1500"/>
+    <SYM_ENCRYPT sym_algorithm="AES"
+                 keystore_name="${jgroups.encrypt.keystore:raft.keystore}"
+                 keystore_type="${jgroups.encrypt.keystore_type:PKCS12}"
+                 store_password="${jgroups.encrypt.keystore_password}"
+                 key_password="${jgroups.encrypt.keystore_password}"
+                 alias="${jgroups.encrypt.alias:maxwell-ha}"/>
     <pbcast.NAKACK2 xmit_interval="500"/>
     <UNICAST3 xmit_interval="500"/>
     <pbcast.STABLE desired_avg_gossip="50000" max_bytes="4M"/>
     <raft.NO_DUPES/>
+    <AUTH auth_class="org.jgroups.auth.X509Token"
+          auth_value="${jgroups.auth.secret}"
+          keystore_type="${jgroups.encrypt.keystore_type:PKCS12}"
+          keystore_path="${jgroups.encrypt.keystore:raft.keystore}"
+          keystore_password="${jgroups.encrypt.keystore_password}"
+          cert_alias="${jgroups.auth.alias:maxwell-ha-auth}"
+          cert_password="${jgroups.encrypt.keystore_password}"
+          cipher_type="RSA"/>
     <pbcast.GMS print_local_addr="true" join_timeout="2000"/>
     <UFC max_credits="2M" min_threshold="0.4"/>
     <MFC max_credits="2M" min_threshold="0.4"/>
