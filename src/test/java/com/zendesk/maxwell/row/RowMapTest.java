@@ -214,6 +214,27 @@ public class RowMapTest {
 	}
 
 	@Test
+	public void testToJSONWithNonAsciiData() throws Exception {
+		RowMap rowMap = new RowMap("insert", "MyDatabase", "MyTable", TIMESTAMP_MILLISECONDS,
+				Arrays.asList("id"), POSITION);
+
+		rowMap.putData("id", 9001);
+		rowMap.putData("latin", "caf\u00e9");
+		rowMap.putData("cjk", "\u4e2d\u6587");
+		rowMap.putData("emoji_\ud83d\ude00", "smile \ud83d\ude00");
+		rowMap.putData("lone", "x\ud83dy\ude00");
+		rowMap.putData("control", "\u0000\u001f\u007f\u0080\u2028\"\\");
+		rowMap.putData("rawJSON", new RawJSONString("{\"emoji\":\"\ud83d\ude00\"}"));
+
+		Assert.assertEquals("{\"database\":\"MyDatabase\",\"table\":\"MyTable\",\"type\":\"insert\"," +
+				"\"ts\":1496712943,\"data\":{\"id\":9001,\"latin\":\"caf\u00e9\",\"cjk\":\"\u4e2d\u6587\"," +
+				"\"emoji_\\uD83D\\uDE00\":\"smile \\uD83D\\uDE00\",\"lone\":\"x\\uD83Dy\\uDE00\"," +
+				"\"control\":\"\\u0000\\u001F\u007f\u0080\u2028\\\"\\\\\"," +
+				"\"rawJSON\":{\"emoji\":\"\ud83d\ude00\"}}}",
+				rowMap.toJSON());
+	}
+
+	@Test
 	public void testToJSONWithQuery() throws Exception {
 		RowMap rowMap = new RowMap("insert", "MyDatabase", "MyTable", TIMESTAMP_MILLISECONDS,
 				Arrays.asList("id", "first_name"), POSITION);
