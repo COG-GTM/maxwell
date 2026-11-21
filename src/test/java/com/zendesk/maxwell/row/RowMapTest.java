@@ -216,7 +216,7 @@ public class RowMapTest {
 
 	@Test
 	public void testToJSONRejectsRawJSONWithUnpairedSurrogate() throws Exception {
-		for (String raw : Arrays.asList("{\"e\":\"x\ud83d\"}", "{\"e\":\"\ude00y\"}", "{\"e\":\"x\"}\ud83d")) {
+		for (String raw : Arrays.asList("{\"e\":\"x\ud83d\"}", "{\"e\":\"\ude00y\"}", "{\"e\":\"x\"}\ud83d", "{\"e\":\"\ud83d\ud83d\"}")) {
 			RowMap rowMap = new RowMap("insert", "MyDatabase", "MyTable", TIMESTAMP_MILLISECONDS,
 					Arrays.asList("id"), POSITION);
 			rowMap.putData("id", 9001);
