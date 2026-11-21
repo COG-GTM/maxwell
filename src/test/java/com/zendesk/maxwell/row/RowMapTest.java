@@ -6,9 +6,12 @@ import com.zendesk.maxwell.producer.MaxwellOutputConfig;
 import com.zendesk.maxwell.replication.BinlogPosition;
 import com.zendesk.maxwell.replication.Position;
 
+import com.fasterxml.jackson.core.JsonGenerationException;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -211,6 +214,54 @@ public class RowMapTest {
 				"\"last_name\":\"bar\",\"rawJSON\":{\"UserID\":20}}}",
 				rowMap.toJSON(outputConfig));
 
+	}
+
+	@Test
+	public void testToJSONRejectsRawJSONWithUnpairedSurrogate() throws Exception {
+		for (String raw : Arrays.asList("{\"e\":\"x\ud83d\"}", "{\"e\":\"\ude00y\"}", "{\"e\":\"x\"}\ud83d", "{\"e\":\"\ud83d\ud83d\"}")) {
+			RowMap rowMap = new RowMap("insert", "MyDatabase", "MyTable", TIMESTAMP_MILLISECONDS,
+					Arrays.asList("id"), POSITION);
+			rowMap.putData("id", 9001);
+			rowMap.putData("rawJSON", new RawJSONString(raw));
+
+			// a failed row leaves the thread's generator mid-object, so serialize on a throwaway thread
+			Exception[] thrown = new Exception[1];
+			Thread t = new Thread(() -> {
+				try {
+					rowMap.toJSON();
+				} catch (Exception e) {
+					thrown[0] = e;
+				}
+			});
+			t.start();
+			t.join();
+
+			Assert.assertTrue("expected JsonGenerationException for " + raw, thrown[0] instanceof JsonGenerationException);
+			Assert.assertTrue(thrown[0].getMessage(), thrown[0].getMessage().contains("surrogate"));
+		}
+	}
+
+	@Test
+	public void testToJSONWithNonAsciiData() throws Exception {
+		RowMap rowMap = new RowMap("insert", "MyDatabase", "MyTable", TIMESTAMP_MILLISECONDS,
+				Arrays.asList("id"), POSITION);
+
+		rowMap.putData("id", 9001);
+		rowMap.putData("latin", "caf\u00e9");
+		rowMap.putData("cjk", "\u4e2d\u6587");
+		rowMap.putData("emoji_\ud83d\ude00", "smile \ud83d\ude00");
+		rowMap.putData("lone", "x\ud83dy\ude00");
+		rowMap.putData("control", "\u0000\u001f\u007f\u0080\u2028\"\\");
+		rowMap.putData("rawJSON", new RawJSONString("{\"emoji\":\"\ud83d\ude00\"}"));
+
+		// row JSON is UTF-8 decoded with the default charset, so compare against the same decoding
+		String expectedUtf8 = "{\"database\":\"MyDatabase\",\"table\":\"MyTable\",\"type\":\"insert\"," +
+				"\"ts\":1496712943,\"data\":{\"id\":9001,\"latin\":\"caf\u00e9\",\"cjk\":\"\u4e2d\u6587\"," +
+				"\"emoji_\\uD83D\\uDE00\":\"smile \\uD83D\\uDE00\",\"lone\":\"x\\uD83Dy\\uDE00\"," +
+				"\"control\":\"\\u0000\\u001F\u007f\u0080\u2028\\\"\\\\\"," +
+				"\"rawJSON\":{\"emoji\":\"\ud83d\ude00\"}}}";
+		Assert.assertEquals(new String(expectedUtf8.getBytes(StandardCharsets.UTF_8), Charset.defaultCharset()),
+				rowMap.toJSON());
 	}
 
 	@Test
