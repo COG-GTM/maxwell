@@ -8,8 +8,11 @@ import com.zendesk.maxwell.replication.Position;
 
 import com.fasterxml.jackson.core.JsonGenerationException;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -241,6 +244,8 @@ public class RowMapTest {
 
 	@Test
 	public void testToJSONWithNonAsciiData() throws Exception {
+		// row JSON is decoded with the default charset, so literal non-ASCII output assumes UTF-8
+		Assume.assumeTrue(Charset.defaultCharset().equals(StandardCharsets.UTF_8));
 		RowMap rowMap = new RowMap("insert", "MyDatabase", "MyTable", TIMESTAMP_MILLISECONDS,
 				Arrays.asList("id"), POSITION);
 
