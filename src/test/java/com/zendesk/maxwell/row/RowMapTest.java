@@ -6,6 +6,7 @@ import com.zendesk.maxwell.producer.MaxwellOutputConfig;
 import com.zendesk.maxwell.replication.BinlogPosition;
 import com.zendesk.maxwell.replication.Position;
 
+import com.fasterxml.jackson.core.JsonGenerationException;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -211,6 +212,31 @@ public class RowMapTest {
 				"\"last_name\":\"bar\",\"rawJSON\":{\"UserID\":20}}}",
 				rowMap.toJSON(outputConfig));
 
+	}
+
+	@Test
+	public void testToJSONRejectsRawJSONWithUnpairedSurrogate() throws Exception {
+		for (String raw : Arrays.asList("{\"e\":\"x\ud83d\"}", "{\"e\":\"\ude00y\"}", "{\"e\":\"x\"}\ud83d")) {
+			RowMap rowMap = new RowMap("insert", "MyDatabase", "MyTable", TIMESTAMP_MILLISECONDS,
+					Arrays.asList("id"), POSITION);
+			rowMap.putData("id", 9001);
+			rowMap.putData("rawJSON", new RawJSONString(raw));
+
+			// a failed row leaves the thread's generator mid-object, so serialize on a throwaway thread
+			Exception[] thrown = new Exception[1];
+			Thread t = new Thread(() -> {
+				try {
+					rowMap.toJSON();
+				} catch (Exception e) {
+					thrown[0] = e;
+				}
+			});
+			t.start();
+			t.join();
+
+			Assert.assertTrue("expected JsonGenerationException for " + raw, thrown[0] instanceof JsonGenerationException);
+			Assert.assertTrue(thrown[0].getMessage(), thrown[0].getMessage().contains("surrogate"));
+		}
 	}
 
 	@Test

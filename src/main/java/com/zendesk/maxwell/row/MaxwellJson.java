@@ -1,6 +1,7 @@
 package com.zendesk.maxwell.row;
 
 import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonGenerationException;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.SerializableString;
 import com.fasterxml.jackson.core.io.CharacterEscapes;
@@ -89,10 +90,27 @@ public class MaxwellJson {
 			g.writeEndArray();
 		} else if (value instanceof RawJSONString) {
 			// JSON column type, using binlog-connector's serializers.
+			String json = ((RawJSONString) value).json;
 			g.writeFieldName(key);
-			g.writeRawValue(((RawJSONString) value).json);
+			checkRawSurrogates(json);
+			g.writeRawValue(json);
 		} else {
 			g.writeObjectField(key, value);
+		}
+	}
+
+	// the UTF-8 generator rejects raw values with unpaired surrogates; keep failing the same way
+	private static void checkRawSurrogates(String json) throws JsonGenerationException {
+		for (int i = 0; i < json.length(); i++) {
+			char c = json.charAt(i);
+			if (!Character.isSurrogate(c))
+				continue;
+			if (i + 1 == json.length())
+				throw new JsonGenerationException(String.format("Split surrogate on writeRaw() input (last character): first character 0x%04x", (int) c), (JsonGenerator) null);
+			char next = json.charAt(i + 1);
+			if (!Character.isHighSurrogate(c) || !Character.isLowSurrogate(next))
+				throw new JsonGenerationException(String.format("Incomplete surrogate pair: first char 0x%04X, second 0x%04X", (int) c, (int) next), (JsonGenerator) null);
+			i++;
 		}
 	}
 
