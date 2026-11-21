@@ -14,6 +14,9 @@ import javax.script.ScriptException;
 import java.io.ByteArrayOutputStream;
 import java.io.CharArrayWriter;
 import java.io.IOException;
+import java.io.Writer;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 public class MaxwellJson {
@@ -22,7 +25,11 @@ public class MaxwellJson {
 
 	private static final CharacterEscapes SURROGATE_ESCAPES = new SurrogateEscapes();
 
-	private final CharArrayWriter buffer;
+	// the char buffer only matches the old UTF-8 bytes decoded with the default charset when that charset is UTF-8
+	private static final boolean DEFAULT_CHARSET_IS_UTF8 = Charset.defaultCharset().equals(StandardCharsets.UTF_8);
+
+	private final CharArrayWriter chars;
+	private final ByteArrayOutputStream bytes;
 	private final JsonGenerator jsonGenerator;
 	private final PlaintextJsonGenerator plaintextGenerator;
 	private final EncryptingJsonGenerator encryptingGenerator;
@@ -37,10 +44,17 @@ public class MaxwellJson {
 	});
 
 	private MaxwellJson() throws IOException {
-		buffer = new CharArrayWriter();
-		jsonGenerator = jsonFactory.createGenerator(buffer);
+		if (DEFAULT_CHARSET_IS_UTF8) {
+			chars = new CharArrayWriter();
+			bytes = null;
+			jsonGenerator = jsonFactory.createGenerator(chars);
+			jsonGenerator.setCharacterEscapes(SURROGATE_ESCAPES);
+		} else {
+			chars = null;
+			bytes = new ByteArrayOutputStream();
+			jsonGenerator = jsonFactory.createGenerator(bytes);
+		}
 		jsonGenerator.setRootValueSeparator(null);
-		jsonGenerator.setCharacterEscapes(SURROGATE_ESCAPES);
 		plaintextGenerator = new PlaintextJsonGenerator(jsonGenerator);
 		encryptingGenerator = new EncryptingJsonGenerator(jsonGenerator, jsonFactory);
 	}
@@ -58,15 +72,22 @@ public class MaxwellJson {
 	}
 
 	public JsonGenerator reset() throws IOException {
-		buffer.reset();
+		resetBuffer();
 		return jsonGenerator;
 	}
 
 	public String consume() throws IOException {
 		jsonGenerator.flush();
-		String s = buffer.toString();
-		buffer.reset();
+		String s = chars != null ? chars.toString() : bytes.toString();
+		resetBuffer();
 		return s;
+	}
+
+	private void resetBuffer() {
+		if (chars != null)
+			chars.reset();
+		else
+			bytes.reset();
 	}
 
 	public static void writeValueToJSON(JsonGenerator g, boolean includeNullField, String key, Object value) throws IOException {
@@ -92,7 +113,7 @@ public class MaxwellJson {
 			// JSON column type, using binlog-connector's serializers.
 			String json = ((RawJSONString) value).json;
 			g.writeFieldName(key);
-			g.writeRawValue(utf8RoundTrip(json));
+			g.writeRawValue(g.getOutputTarget() instanceof Writer ? utf8RoundTrip(json) : json);
 		} else {
 			g.writeObjectField(key, value);
 		}
@@ -111,7 +132,7 @@ public class MaxwellJson {
 		try (JsonGenerator utf8 = jsonFactory.createGenerator(out)) {
 			utf8.writeRaw(json);
 		}
-		return out.toString();
+		return new String(out.toByteArray(), StandardCharsets.UTF_8);
 	}
 
 	/*
