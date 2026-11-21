@@ -8,7 +8,6 @@ import com.zendesk.maxwell.replication.Position;
 
 import com.fasterxml.jackson.core.JsonGenerationException;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
 
 import java.nio.charset.Charset;
@@ -244,8 +243,6 @@ public class RowMapTest {
 
 	@Test
 	public void testToJSONWithNonAsciiData() throws Exception {
-		// row JSON is decoded with the default charset, so literal non-ASCII output assumes UTF-8
-		Assume.assumeTrue(Charset.defaultCharset().equals(StandardCharsets.UTF_8));
 		RowMap rowMap = new RowMap("insert", "MyDatabase", "MyTable", TIMESTAMP_MILLISECONDS,
 				Arrays.asList("id"), POSITION);
 
@@ -257,11 +254,13 @@ public class RowMapTest {
 		rowMap.putData("control", "\u0000\u001f\u007f\u0080\u2028\"\\");
 		rowMap.putData("rawJSON", new RawJSONString("{\"emoji\":\"\ud83d\ude00\"}"));
 
-		Assert.assertEquals("{\"database\":\"MyDatabase\",\"table\":\"MyTable\",\"type\":\"insert\"," +
+		// row JSON is UTF-8 decoded with the default charset, so compare against the same decoding
+		String expectedUtf8 = "{\"database\":\"MyDatabase\",\"table\":\"MyTable\",\"type\":\"insert\"," +
 				"\"ts\":1496712943,\"data\":{\"id\":9001,\"latin\":\"caf\u00e9\",\"cjk\":\"\u4e2d\u6587\"," +
 				"\"emoji_\\uD83D\\uDE00\":\"smile \\uD83D\\uDE00\",\"lone\":\"x\\uD83Dy\\uDE00\"," +
 				"\"control\":\"\\u0000\\u001F\u007f\u0080\u2028\\\"\\\\\"," +
-				"\"rawJSON\":{\"emoji\":\"\ud83d\ude00\"}}}",
+				"\"rawJSON\":{\"emoji\":\"\ud83d\ude00\"}}}";
+		Assert.assertEquals(new String(expectedUtf8.getBytes(StandardCharsets.UTF_8), Charset.defaultCharset()),
 				rowMap.toJSON());
 	}
 
